@@ -2,15 +2,20 @@
 import { useState, useEffect } from "react";
 import OutletSwitcher from "@/components/dashboard/OutletSwitcher";
 import NotificationBell from "@/components/dashboard/NotificationBell";
+import { useAuth } from "@/context/AuthContext";
+import { useRouter } from "next/navigation";
 
 export default function Topbar() {
-  const [theme, setTheme] = useState("dark");
+  const { signOut, applicationUser } = useAuth();
+  const router = useRouter();
+  const [theme, setTheme] = useState(() => {
+    if (typeof window === "undefined") return "dark";
+    return localStorage.getItem("rasoisaathi-theme") || "dark";
+  });
 
   useEffect(() => {
-    const saved = localStorage.getItem("rasoisaathi-theme") || "dark";
-    setTheme(saved);
-    document.documentElement.setAttribute("data-theme", saved);
-  }, []);
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
 
   function toggleTheme() {
     const next = theme === "dark" ? "light" : "dark";
@@ -40,6 +45,13 @@ export default function Topbar() {
           )}
         </button>
         <NotificationBell />
+        <button
+          onClick={async () => { await signOut(); router.replace("/login"); }}
+          className="text-xs font-semibold text-muted hover:text-accent transition-colors"
+        >
+          Sign out
+        </button>
+        <span className="hidden sm:inline text-xs font-semibold text-muted">{applicationUser?.role}</span>
       </div>
     </header>
   );

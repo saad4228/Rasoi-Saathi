@@ -1,5 +1,6 @@
 import { Plus_Jakarta_Sans, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import AuthProviderShell from "@/components/AuthProvider";
 
 const jakarta = Plus_Jakarta_Sans({
   subsets: ["latin"],
@@ -24,7 +25,7 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en" data-theme="light" className={`${jakarta.variable} ${inter.variable} ${jetbrains.variable}`}>
-      <body className="font-body">{children}</body>
+      <body className="font-body"><AuthProviderShell>{children}</AuthProviderShell></body>
     </html>
   );
 }

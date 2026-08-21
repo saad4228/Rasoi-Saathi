@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Image from "next/image";
+import Link from "next/link";
 
 const links = [
   { name: "How It Works", href: "#how-it-works" },
@@ -50,9 +51,9 @@ export default function Navbar() {
         </div>
 
         <div className="flex items-center gap-4">
-          <a href="#" className="text-sm font-semibold text-ink hidden sm:block">
+          <Link href="/login" className="text-sm font-semibold text-ink hidden sm:block">
             Login
-          </a>
+          </Link>
           <button
             onClick={toggleTheme}
             className="w-9 h-9 rounded-[10px] bg-surface-2 border border-border flex items-center justify-center hover:-translate-y-0.5 transition-transform text-ink"
@@ -69,12 +70,12 @@ export default function Navbar() {
               </svg>
             )}
           </button>
-          <a
-            href="/dashboard"
+          <Link
+            href="/signup"
             className="bg-gradient-to-r from-accent to-accent-2 text-white text-sm font-bold px-5 py-2.5 rounded-[11px] shadow-[0_6px_20px_-4px_rgba(230,82,43,0.45)] hover:-translate-y-0.5 transition-transform inline-block"
           >
             Start For Free
-          </a>
+          </Link>
         </div>
       </div>
     </nav>
