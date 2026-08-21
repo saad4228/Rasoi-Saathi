@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 	supabase_url: str = Field(min_length=1)
 	supabase_jwt_audience: str = "authenticated"
 	supabase_jwt_issuer: str | None = None
+	frontend_url: str = "http://localhost:5173"
 
 	model_config = SettingsConfigDict(
 		env_file=".env",
