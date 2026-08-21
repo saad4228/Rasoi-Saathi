@@ -31,7 +31,7 @@ export default function Navbar() {
   return (
     <nav className="sticky top-0 z-50 backdrop-blur-md bg-bg/80 border-b border-border">
       <div className="max-w-[1180px] mx-auto flex items-center justify-between px-8 py-3">
-        <a href="#" className="flex items-center gap-2">
+        <a href="/" className="flex items-center gap-2">
           <Image src="/logo.png" alt="RasoiSaathi" width={80} height={80} />
           <span className="font-display font-extrabold text-lg text-ink">
             Rasoi<span className="text-accent">Saathi</span>
