@@ -14,7 +14,7 @@ const initialDishes = [
     type: "non-veg",
     prepTime: "18 min",
     available: true,
-    image: null,
+    image: "https://images.unsplash.com/photo-1563379091339-03b21ab4a4f8?w=400&h=300&fit=crop",
   },
   {
     id: 2,
@@ -24,7 +24,7 @@ const initialDishes = [
     type: "veg",
     prepTime: "8 min",
     available: true,
-    image: null,
+    image: "https://static.toiimg.com/thumb/66474043.cms?imgsize=399490&width=400&height=300&fit=crop",
   },
   {
     id: 3,
@@ -34,7 +34,7 @@ const initialDishes = [
     type: "veg",
     prepTime: "15 min",
     available: false,
-    image: null,
+    image: "https://images.unsplash.com/photo-1546833999-b9f581a1996d?w=400&h=300&fit=crop",
   },
   {
     id: 4,
@@ -44,7 +44,7 @@ const initialDishes = [
     type: "veg",
     prepTime: "4 min",
     available: true,
-    image: null,
+    image: "https://images.unsplash.com/photo-1461023058943-07fcbe16d735?w=400&h=300&fit=crop",
   },
 ];
 
