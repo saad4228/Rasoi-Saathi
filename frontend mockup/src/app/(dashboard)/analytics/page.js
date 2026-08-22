@@ -1,54 +1,16 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { DollarSign, TrendingUp, TrendingDown, Percent, ArrowUp, ArrowDown } from "lucide-react";
 import {
   AreaChart, Area, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
+import { useAuth } from "@/context/AuthContext";
+import { apiRequest } from "@/services/api";
 
 const ACCENT = "#F2660D";
 const INK = "#1A1512";
-
-// TODO(backend): replace with real fetched data, keyed by range
-const TREND_BY_RANGE = {
-  "7d": [
-    { label: "Mon", revenue: 22000, profit: 6200, orders: 68 },
-    { label: "Tue", revenue: 25400, profit: 7100, orders: 74 },
-    { label: "Wed", revenue: 21100, profit: 5300, orders: 61 },
-    { label: "Thu", revenue: 28600, profit: 8400, orders: 82 },
-    { label: "Fri", revenue: 31200, profit: 9600, orders: 91 },
-    { label: "Sat", revenue: 34500, profit: 10800, orders: 104 },
-    { label: "Sun", revenue: 29400, profit: 8900, orders: 88 },
-  ],
-  "30d": Array.from({ length: 30 }, (_, i) => ({
-    label: `${i + 1}`,
-    revenue: 18000 + Math.round(Math.sin(i / 3) * 6000 + i * 300),
-    profit: 5000 + Math.round(Math.sin(i / 3) * 1800 + i * 90),
-    orders: 55 + Math.round(Math.sin(i / 4) * 15 + i * 0.8),
-  })),
-};
-
-const COST_BREAKDOWN = [
-  { name: "Food Cost", value: 42, color: ACCENT },
-  { name: "Platform Fees", value: 18, color: "#F0A93A" },
-  { name: "Wastage", value: 8, color: "#C9500A" },
-  { name: "Other Costs", value: 32, color: "#E7DFD1" },
-];
-
-const DISHES = [
-  { name: "Chicken Biryani", revenue: 42000, orders: 210, margin: 31 },
-  { name: "Paneer Roll", revenue: 18500, orders: 260, margin: 44 },
-  { name: "Veg Thali", revenue: 15200, orders: 95, margin: 22 },
-  { name: "Iced Latte", revenue: 9800, orders: 180, margin: 58 },
-];
-
-const STATS = [
-  { label: "Total Revenue", value: "₹1,92,200", change: "+12%", icon: DollarSign, up: true },
-  { label: "Total Orders", value: "612", change: "+6%", icon: TrendingUp, up: true },
-  { label: "Profit Margin", value: "27.4%", change: "-2.1%", icon: Percent, up: false },
-  { label: "Food Cost %", value: "34%", change: "+3%", icon: TrendingDown, up: false },
-];
 
 const METRICS = [
   { key: "revenue", label: "Revenue" },
@@ -57,15 +19,31 @@ const METRICS = [
 ];
 
 export default function AnalyticsPage() {
+  const { session } = useAuth();
   const [range, setRange] = useState("7d");
   const [metric, setMetric] = useState("revenue");
   const [sortBy, setSortBy] = useState("revenue");
+  const [analytics, setAnalytics] = useState({ trend: [], stats: {}, cost_breakdown: [], dishes: [] });
+  const [error, setError] = useState("");
 
-  const trend = TREND_BY_RANGE[range];
+  useEffect(() => {
+    apiRequest(`/api/analytics/summary?days=${range === "7d" ? 7 : 30}`, {}, session)
+      .then(setAnalytics)
+      .catch((loadError) => setError(loadError.message || "Unable to load analytics."));
+  }, [range, session]);
+
+  const trend = analytics.trend;
   const sortedDishes = useMemo(
-    () => [...DISHES].sort((a, b) => b[sortBy] - a[sortBy]),
-    [sortBy]
+    () => [...analytics.dishes].sort((a, b) => b[sortBy] - a[sortBy]),
+    [analytics.dishes, sortBy]
   );
+  const topDish = sortedDishes[0];
+  const stats = [
+    { label: "Total Revenue", value: `₹${Number(analytics.stats.total_revenue || 0).toLocaleString("en-IN")}`, change: "Live", icon: DollarSign, up: true },
+    { label: "Total Orders", value: Number(analytics.stats.total_orders || 0).toLocaleString("en-IN"), change: "Live", icon: TrendingUp, up: true },
+    { label: "Profit Margin", value: `${Number(analytics.stats.profit_margin || 0).toFixed(1)}%`, change: "Live", icon: Percent, up: true },
+    { label: "Food Cost %", value: `${Number(analytics.stats.food_cost_percent || 0).toFixed(1)}%`, change: "Live", icon: TrendingDown, up: false },
+  ];
 
   return (
     <div className="p-8">
@@ -90,9 +68,11 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
+      {error && <p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+
       {/* stat cards */}
       <div className="grid grid-cols-4 gap-4 mt-6">
-        {STATS.map((s) => (
+        {stats.map((s) => (
           <div key={s.label} className="rounded-2xl p-5 bg-white border shadow-sm hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between">
               <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: "#FDEDE1" }}>
@@ -153,7 +133,7 @@ export default function AnalyticsPage() {
     <ResponsiveContainer width="100%" height={200}>
       <PieChart>
         <Pie
-          data={COST_BREAKDOWN}
+          data={analytics.cost_breakdown}
           dataKey="value"
           innerRadius={55}
           outerRadius={80}
@@ -162,20 +142,20 @@ export default function AnalyticsPage() {
           label={({ value }) => `${value}%`}
           labelLine={false}
         >
-          {COST_BREAKDOWN.map((c) => <Cell key={c.name} fill={c.color} stroke="none" />)}
+          {analytics.cost_breakdown.map((c) => <Cell key={c.name} fill={c.color} stroke="none" />)}
         </Pie>
         <Tooltip formatter={(v) => `${v}%`} />
       </PieChart>
     </ResponsiveContainer>
     {/* center label */}
     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-      <span className="text-2xl font-extrabold">42%</span>
+      <span className="text-2xl font-extrabold">{Math.round(analytics.cost_breakdown[0]?.value || 0)}%</span>
       <span className="text-[10px] text-gray-400">largest cost</span>
     </div>
   </div>
 
   <div className="space-y-3 mt-3">
-    {COST_BREAKDOWN.map((c) => (
+    {analytics.cost_breakdown.map((c) => (
       <div key={c.name}>
         <div className="flex items-center justify-between text-xs mb-1">
           <span className="flex items-center gap-2 text-gray-600">
@@ -240,11 +220,10 @@ export default function AnalyticsPage() {
         {/* AI insight */}
         <div className="rounded-2xl p-6" style={{ background: "linear-gradient(135deg, #FDEDE1, #FFF8F0)" }}>
           <h2 className="font-bold text-sm mb-2">✨ Copilot Insight</h2>
-          {/* TODO(backend): replace with real generated insight */}
           <p className="text-sm text-gray-700 leading-relaxed">
-            Profit margin dropped 2.1% this week — mainly rising food costs
-            on Chicken Biryani and fewer high-margin drink orders. A small
-            price adjustment or a combo offer could recover the margin.
+            {topDish
+              ? `${topDish.name} is your top dish by ${sortBy === "orders" ? "orders" : "revenue"} in this period. Food cost is ${Number(analytics.stats.food_cost_percent || 0).toFixed(1)}% of revenue across ${Number(analytics.stats.total_orders || 0)} completed orders.`
+              : "Complete orders to generate a live profitability insight."}
           </p>
           <button className="text-sm font-semibold mt-4" style={{ color: ACCENT }}>
             Ask the Copilot for a fix →

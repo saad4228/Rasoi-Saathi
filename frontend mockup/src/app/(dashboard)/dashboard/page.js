@@ -99,7 +99,7 @@ export default function DashboardPage() {
             </div>
             <span className="text-xs text-muted">Last 7 days</span>
           </div>
-          <RevenueChart />
+          <RevenueChart data={summary?.revenue_series} />
         </div>
 
         <div className="rounded-2xl border border-border bg-gradient-to-br from-accent/10 to-accent-2/10 p-5">

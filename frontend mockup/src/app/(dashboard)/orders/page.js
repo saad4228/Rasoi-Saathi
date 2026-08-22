@@ -49,6 +49,8 @@ export default function OrdersPage() {
     try {
       const updated = await apiRequest(`/api/orders/${orderId}`, { method: "PATCH", body: JSON.stringify({ status: status.toUpperCase() }) }, session);
       setOrders((current) => current.map((order) => order.orderId === orderId ? { ...order, status: updated.status } : order));
+    } catch (error) {
+      window.alert(error.message || "The order status could not be updated.");
     } finally {
       setUpdatingOrderId(null);
     }

@@ -55,10 +55,12 @@ class MenuItemResponse(BaseModel):
     name: str
     description: str | None
     category: str | None
+    food_type: str
     image_url: str | None
     price: Decimal
     is_active: bool
     low_stock_ingredient_count: int = 0
+    ingredients: list[dict] = Field(default_factory=list)
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -67,6 +69,7 @@ class MenuItemCreate(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     description: str | None = None
     category: str | None = None
+    food_type: str = Field(default="veg", pattern="^(veg|non-veg)$")
     image_url: str | None = None
     price: Decimal = Field(ge=0)
     is_active: bool = True
@@ -77,6 +80,7 @@ class MenuItemUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=150)
     description: str | None = None
     category: str | None = None
+    food_type: str | None = Field(default=None, pattern="^(veg|non-veg)$")
     image_url: str | None = None
     price: Decimal | None = Field(default=None, ge=0)
     is_active: bool | None = None
@@ -84,6 +88,7 @@ class MenuItemUpdate(BaseModel):
 
 class InventoryItemResponse(BaseModel):
     id: UUID
+    branch_id: UUID
     name: str
     unit: str
     current_stock: Decimal
@@ -123,6 +128,18 @@ class OrderItemResponse(BaseModel):
     quantity: int
     unit_price: Decimal
     total_price: Decimal
+
+
+class OrderItemCreate(BaseModel):
+    menu_item_id: UUID
+    quantity: int = Field(gt=0)
+
+
+class OrderCreate(BaseModel):
+    branch_id: UUID
+    order_type: str = Field(default="DINE_IN", min_length=1, max_length=30)
+    customer_id: UUID | None = None
+    items: list[OrderItemCreate] = Field(min_length=1)
 
 
 class OrderResponse(BaseModel):

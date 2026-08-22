@@ -9,6 +9,7 @@ const groups = [
     links: [
       { name: "Dashboard", href: "/dashboard", icon: "▦" },
       { name: "Orders", href: "/orders", icon: "🧾" },
+      { name: "Waiter Orders", href: "/waiter-orders", icon: "🛎️" },
       { name: "Menu", href: "/menu", icon: "🍽️" },
     ],
   },

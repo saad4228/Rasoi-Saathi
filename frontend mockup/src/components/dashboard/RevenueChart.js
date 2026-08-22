@@ -2,7 +2,7 @@
 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
-const data = [
+const fallbackData = [
   { day: "Mon", revenue: 24000 },
   { day: "Tue", revenue: 28000 },
   { day: "Wed", revenue: 22000 },
@@ -12,10 +12,11 @@ const data = [
   { day: "Sun", revenue: 38000 },
 ];
 
-export default function RevenueChart() {
+export default function RevenueChart({ data }) {
+  const chartData = data?.length ? data.map((item) => ({ ...item, day: new Date(item.day).toLocaleDateString("en-IN", { weekday: "short" }) })) : fallbackData;
   return (
     <ResponsiveContainer width="100%" height={300}>
-      <LineChart data={data}>
+      <LineChart data={chartData}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
         <XAxis dataKey="day" stroke="var(--muted)" style={{ fontSize: "12px" }} />
         <YAxis stroke="var(--muted)" style={{ fontSize: "12px" }} />

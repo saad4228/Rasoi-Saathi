@@ -78,7 +78,7 @@ export default function MenuPage() {
       .catch(() => setBranches([]));
 
     apiRequest("/api/menu-items", {}, session)
-      .then((items) => setDishes(items.map((item) => ({ ...item, category: item.category?.toLowerCase(), image: item.image_url, price: `₹${Number(item.price).toLocaleString("en-IN")}`, available: item.is_active, type: "veg", prepTime: "—" }))))
+      .then((items) => setDishes(items.map((item) => ({ ...item, category: item.category?.toLowerCase(), image: item.image_url, price: `₹${Number(item.price).toLocaleString("en-IN")}`, available: item.is_active, type: item.food_type || "veg", prepTime: "—" }))))
       .catch(() => setDishes([]));
   }, [session]);
 
@@ -126,6 +126,7 @@ export default function MenuPage() {
         branch_id: newDish.branch_id || selectedBranchId,
         name: newDish.name,
         description: newDish.description || null,
+        food_type: newDish.type || "veg",
         image_url: imageUrl,
         category: newDish.category,
         price: Number(String(newDish.price).replace(/[^0-9.]/g, "")),
@@ -173,7 +174,7 @@ export default function MenuPage() {
     }, session);
 
     setDishes((prev) => prev.map((dish) => (
-      dish.id === id ? { ...dish, ...updated, image: updated.image_url } : dish
+      dish.id === id ? { ...dish, ...updated, type: updated.food_type || dish.type, image: updated.image_url } : dish
     )));
   }
 
@@ -183,7 +184,7 @@ export default function MenuPage() {
       body: JSON.stringify(values),
     }, session);
     setDishes((prev) => prev.map((dish) => (
-      dish.id === id ? { ...dish, ...updated, image: updated.image_url } : dish
+      dish.id === id ? { ...dish, ...updated, type: updated.food_type || dish.type, image: updated.image_url } : dish
     )));
   }
 
@@ -406,7 +407,7 @@ function EmptyMenuState() {
       </div>
       <h2 className="text-lg font-bold text-ink">No dishes in this category</h2>
       <p className="text-muted mt-1 max-w-xs">
-        Add a dish to this category and it'll show up here.
+        Add a dish to this category and it&apos;ll show up here.
       </p>
     </div>
   );
@@ -422,6 +423,7 @@ function EditDishModal({ dish, onClose, onSave }) {
     name: dish.name || "",
     description: dish.description || "",
     category: dish.category || "mains",
+    food_type: dish.food_type || dish.type || "veg",
     price: String(dish.price || "").replace(/[^0-9.]/g, ""),
     is_active: dish.is_active ?? dish.available ?? true,
   };
@@ -441,6 +443,7 @@ function EditDishModal({ dish, onClose, onSave }) {
         name: values.name.trim(),
         description: values.description.trim() || null,
         category: values.category,
+        food_type: values.food_type,
         price: Number(values.price),
         is_active: values.is_active,
       });
@@ -482,6 +485,31 @@ function EditDishModal({ dish, onClose, onSave }) {
               <label className="text-xs font-semibold text-muted block mb-1.5">Price (₹)</label>
               <input type="number" min="0" value={values.price} onChange={(event) => updateField("price", event.target.value)} className="w-full bg-surface-2 border border-border rounded-lg px-3 py-2.5 text-sm text-ink outline-none focus:border-accent" />
             </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-muted block mb-1.5">Type</label>
+            <div className="flex gap-2">
+              {[["veg", "Veg"], ["non-veg", "Non-Veg"]].map(([type, label]) => (
+                <button key={type} type="button" onClick={() => updateField("food_type", type)} className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-semibold border ${values.food_type === type ? "border-accent bg-accent/10 text-accent" : "border-border text-muted"}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-muted block mb-1.5">Recipe ingredients</label>
+            {dish.ingredients?.length ? (
+              <div className="space-y-2 rounded-lg border border-border bg-surface-2 p-3">
+                {dish.ingredients.map((ingredient) => (
+                  <div key={ingredient.inventory_item_id} className="flex items-center justify-between text-sm text-ink">
+                    <span>{ingredient.name}</span>
+                    <span className="font-semibold">{ingredient.quantity_per_unit} {ingredient.unit} / dish</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted rounded-lg border border-border bg-surface-2 p-3">No inventory ingredients linked.</p>
+            )}
           </div>
           <label className="flex items-center gap-2 text-sm font-semibold text-ink">
             <input type="checkbox" checked={values.is_active} onChange={(event) => updateField("is_active", event.target.checked)} />
