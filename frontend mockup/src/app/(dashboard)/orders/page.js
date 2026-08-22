@@ -1,36 +1,58 @@
 "use client";
 
-import { useState } from "react";
-import { ChefHat } from "lucide-react";
-
-// Temporary mock data — we'll replace this with real order data later
-const mockOrders = [
-  // Empty for now, so you see the empty state first.
-  // Example of what a real order object will look like:
-  // { id: "1248", source: "WhatsApp", customer: "Rahul S.", items: "2x Veg Biryani", status: "pending", time: "12:30 PM" },
-];
+import { ChefHat, ChevronRight, Clock3, ReceiptText } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useAuth } from "@/context/AuthContext";
+import { apiRequest } from "@/services/api";
 
 const statusFilters = [
   { key: "all", label: "All" },
   { key: "pending", label: "Pending", dot: "bg-orange-500" },
+  { key: "confirmed", label: "Confirmed", dot: "bg-blue-500" },
   { key: "preparing", label: "Preparing", dot: "bg-amber-400" },
   { key: "ready", label: "Ready", dot: "bg-green-500" },
-  { key: "served", label: "Served", dot: "bg-blue-500" },
-  { key: "rejected", label: "Rejected", dot: "bg-red-500" },
+  { key: "completed", label: "Completed", dot: "bg-emerald-500" },
+  { key: "cancelled", label: "Cancelled", dot: "bg-red-500" },
 ];
 
 export default function OrdersPage() {
+  const { session } = useAuth();
   const [activeFilter, setActiveFilter] = useState("all");
+  const [orders, setOrders] = useState([]);
+  const [updatingOrderId, setUpdatingOrderId] = useState(null);
+  useEffect(() => {
+    apiRequest("/api/orders", {}, session)
+      .then((loaded) => setOrders(loaded.map((order) => ({
+        ...order,
+        orderId: order.id,
+        displayId: order.id.slice(0, 8),
+        source: order.order_source,
+        customer: "Restaurant order",
+        items: order.items.map((item) => `${item.quantity}x ${item.menu_item_name}`).join(", "),
+        time: new Date(order.ordered_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
+      }))))
+      .catch(() => setOrders([]));
+  }, [session]);
 
   const countFor = (key) =>
     key === "all"
-      ? mockOrders.length
-      : mockOrders.filter((o) => o.status === key).length;
+      ? orders.length
+      : orders.filter((o) => o.status.toLowerCase() === key).length;
 
   const filteredOrders =
     activeFilter === "all"
-      ? mockOrders
-      : mockOrders.filter((o) => o.status === activeFilter);
+      ? orders
+      : orders.filter((o) => o.status.toLowerCase() === activeFilter);
+
+  async function updateOrderStatus(orderId, status) {
+    setUpdatingOrderId(orderId);
+    try {
+      const updated = await apiRequest(`/api/orders/${orderId}`, { method: "PATCH", body: JSON.stringify({ status: status.toUpperCase() }) }, session);
+      setOrders((current) => current.map((order) => order.orderId === orderId ? { ...order, status: updated.status } : order));
+    } finally {
+      setUpdatingOrderId(null);
+    }
+  }
 
   return (
     <div className="p-6">
@@ -73,9 +95,9 @@ export default function OrdersPage() {
       {filteredOrders.length === 0 ? (
         <EmptyOrdersState />
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="overflow-hidden rounded-2xl border border-border bg-surface divide-y divide-border">
           {filteredOrders.map((order) => (
-            <OrderCard key={order.id} order={order} />
+            <OrderCard key={order.orderId} order={order} updating={updatingOrderId === order.orderId} onStatusChange={updateOrderStatus} />
           ))}
         </div>
       )}
@@ -100,30 +122,47 @@ function EmptyOrdersState() {
   );
 }
 
-function OrderCard({ order }) {
+function OrderCard({ order, updating, onStatusChange }) {
   const statusStyles = {
-    pending: "bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-400",
-    preparing: "bg-amber-100 text-amber-700 dark:bg-amber-400/15 dark:text-amber-300",
-    ready: "bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-400",
-    served: "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-400",
-    rejected: "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400",
+    pending: "bg-orange-500/10 text-orange-600 dark:text-orange-300",
+    confirmed: "bg-blue-500/10 text-blue-600 dark:text-blue-300",
+    preparing: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    ready: "bg-green-500/10 text-green-600 dark:text-green-300",
+    completed: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
+    cancelled: "bg-red-500/10 text-red-600 dark:text-red-300",
   };
+  const normalizedStatus = order.status.toLowerCase();
+  const statusLabel = normalizedStatus.charAt(0).toUpperCase() + normalizedStatus.slice(1);
 
   return (
-    <div className="bg-white dark:bg-neutral-800 border border-gray-200 dark:border-neutral-700 rounded-xl p-4">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-semibold text-gray-900 dark:text-white">
-          #{order.id} · {order.source}
-        </span>
-        <span
-          className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusStyles[order.status]}`}
-        >
-          {order.status}
-        </span>
+    <div className="group grid grid-cols-[auto_1fr_auto] items-center gap-4 px-4 py-4 sm:px-5 hover:bg-surface-2 transition-colors">
+      <div className="hidden sm:flex w-10 h-10 rounded-xl bg-accent/10 text-accent items-center justify-center">
+        <ReceiptText size={18} />
       </div>
-      <p className="text-sm text-gray-600 dark:text-gray-300">{order.customer}</p>
-      <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{order.items}</p>
-      <p className="text-xs text-gray-400 mt-2">{order.time}</p>
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="text-sm font-bold text-ink">#{order.displayId}</span>
+          <span className="text-xs font-medium text-muted uppercase tracking-wide">{order.source}</span>
+          <span className="text-xs text-muted">{order.order_type?.replace("_", " ")}</span>
+        </div>
+        <p className="text-sm text-ink mt-1 truncate">{order.items || "No item details"}</p>
+        <p className="flex items-center gap-1.5 text-xs text-muted mt-1"><Clock3 size={12} />{order.time}</p>
+      </div>
+      <div className="flex items-center gap-3">
+        <div className="text-right hidden sm:block"><p className="text-sm font-bold text-ink">₹{Number(order.total_amount || 0).toLocaleString("en-IN")}</p><p className="text-xs text-muted">Total</p></div>
+        <select
+          value={normalizedStatus}
+          disabled={updating}
+          onChange={(event) => onStatusChange(order.orderId, event.target.value)}
+          aria-label={`Change status for order ${order.displayId}`}
+          className={`whitespace-nowrap text-xs font-bold px-2.5 py-1.5 rounded-full border-0 outline-none cursor-pointer ${statusStyles[normalizedStatus] || "bg-surface-2 text-muted"}`}
+        >
+          {statusFilters.filter((filter) => filter.key !== "all").map((filter) => (
+            <option key={filter.key} value={filter.key}>{filter.label}</option>
+          ))}
+        </select>
+        <ChevronRight size={16} className="text-muted/50 group-hover:text-accent transition-colors" />
+      </div>
     </div>
   );
 }

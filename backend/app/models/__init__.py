@@ -1,4 +1,5 @@
 from app.models.branch import Branch
+from app.models.customer import Customer
 from app.models.demand_forecast import DemandForecast
 from app.models.inventory_item import InventoryItem
 from app.models.inventory_transaction import InventoryTransaction
@@ -15,6 +16,7 @@ from app.models.user import User
 
 __all__ = [
 	"Branch",
+	"Customer",
 	"DemandForecast",
 	"InventoryItem",
 	"InventoryTransaction",

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.routers.auth import router as auth_router
+from app.routers.operations import router as operations_router
 
 settings = get_settings()
 allowed_origins = list({
@@ -27,6 +28,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(operations_router)
 
 
 @app.get("/health")

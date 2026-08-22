@@ -1,140 +1,77 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Package,
   Search,
   Plus,
   AlertTriangle,
   TrendingDown,
-  Sparkles,
   X,
   PackageX,
+  Pencil,
+  Trash2,
 } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import { apiRequest } from "@/services/api";
 
-// Mock inventory data — later this comes from your backend's XGBoost model
-const initialItems = [
-  {
-    id: 1,
-    name: "Paneer",
-    category: "Dairy",
-    currentStock: 1.2,
-    unit: "kg",
-    idealStock: 8,
-    dailyUsage: 2.4,
-    status: "low", // "ok" | "low" | "out"
-  },
-  {
-    id: 2,
-    name: "Basmati Rice",
-    category: "Staples",
-    currentStock: 24,
-    unit: "kg",
-    idealStock: 30,
-    dailyUsage: 3.1,
-    status: "ok",
-  },
-  {
-    id: 3,
-    name: "Chicken (Boneless)",
-    category: "Meat",
-    currentStock: 0,
-    unit: "kg",
-    idealStock: 15,
-    dailyUsage: 5.2,
-    status: "out",
-  },
-  {
-    id: 4,
-    name: "Tomatoes",
-    category: "Vegetables",
-    currentStock: 3.5,
-    unit: "kg",
-    idealStock: 12,
-    dailyUsage: 4.8,
-    status: "low",
-  },
-  {
-    id: 5,
-    name: "Cooking Oil",
-    category: "Staples",
-    currentStock: 18,
-    unit: "L",
-    idealStock: 20,
-    dailyUsage: 1.5,
-    status: "ok",
-  },
-  {
-    id: 6,
-    name: "Garam Masala",
-    category: "Spices",
-    currentStock: 2,
-    unit: "kg",
-    idealStock: 3,
-    dailyUsage: 0.2,
-    status: "ok",
-  },
-];
-
-const categories = ["All", "Vegetables", "Dairy", "Meat", "Staples", "Spices", "Packaging"];
-
-// Turns a status into a badge's color, dot color, and label — one place to edit all three
 const statusConfig = {
   ok: { label: "In Stock", dot: "bg-green-500", text: "text-green-600", rowTint: "" },
   low: { label: "Low Stock", dot: "bg-orange-500", text: "text-orange-600", rowTint: "bg-orange-500/5" },
   out: { label: "Out of Stock", dot: "bg-red-500", text: "text-red-600", rowTint: "bg-red-500/5" },
 };
 
-// A simple stand-in "prediction" — days left = current stock ÷ how much is used per day
-function daysUntilEmpty(item) {
-  if (item.dailyUsage <= 0) return null;
-  const days = item.currentStock / item.dailyUsage;
-  return Math.max(0, Math.round(days * 10) / 10);
-}
-
 const emptyItem = {
+  branch_id: "",
   name: "",
-  category: "Vegetables",
   currentStock: "",
   unit: "kg",
-  idealStock: "",
-  dailyUsage: "",
-  status: "ok",
+  safetyStockLevel: "",
+  reorderDelayDays: "",
+  costPerUnit: "",
+  shelfLifeDays: "",
 };
 
+function mapInventoryItem(item) {
+  return {
+    ...item,
+    currentStock: Number(item.current_stock),
+    safetyStockLevel: Number(item.safety_stock_level),
+    reorderDelayDays: item.reorder_delay_days,
+    costPerUnit: Number(item.cost_per_unit),
+    shelfLifeDays: item.shelf_life_days,
+  };
+}
+
 export default function InventoryPage() {
-  const [items, setItems] = useState(initialItems);
-  const [activeCategory, setActiveCategory] = useState("All");
+  const { session } = useAuth();
+  const [items, setItems] = useState([]);
+  const [branches, setBranches] = useState([]);
+  const [selectedBranchId, setSelectedBranchId] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState(emptyItem);
+  const [editingItemId, setEditingItemId] = useState(null);
+
+  useEffect(() => {
+    apiRequest("/api/branches", {}, session).then((loaded) => {
+      setBranches(loaded);
+      if (loaded[0]) setSelectedBranchId(loaded[0].id);
+    }).catch(() => setBranches([]));
+    apiRequest("/api/inventory-items", {}, session)
+      .then((loaded) => setItems(loaded.map(mapInventoryItem)))
+      .catch(() => setItems([]));
+  }, [session]);
 
   // Stat card numbers, recalculated whenever items change
   const totalItems = items.length;
   const lowStockCount = items.filter((i) => i.status === "low").length;
   const outOfStockCount = items.filter((i) => i.status === "out").length;
-  const atRiskCount = items.filter((i) => {
-    const days = daysUntilEmpty(i);
-    return days !== null && days <= 3 && i.status !== "out";
-  }).length;
-
-  // The single most urgent item, used for the Copilot insight banner text
-  const mostUrgentItem = useMemo(() => {
-    const withDays = items
-      .filter((i) => i.status !== "out")
-      .map((i) => ({ ...i, days: daysUntilEmpty(i) }))
-      .filter((i) => i.days !== null)
-      .sort((a, b) => a.days - b.days);
-    return withDays[0] || null;
-  }, [items]);
+  const atRiskCount = items.filter((i) => i.status === "low").length;
 
   // Filtering + "problems first" sorting, recalculated whenever inputs change
   const visibleItems = useMemo(() => {
-    let result = items;
-
-    if (activeCategory !== "All") {
-      result = result.filter((i) => i.category === activeCategory);
-    }
+    let result = selectedBranchId ? items.filter((i) => i.branch_id === selectedBranchId) : items;
     if (searchQuery.trim()) {
       result = result.filter((i) =>
         i.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -144,23 +81,38 @@ export default function InventoryPage() {
     // Sort so "out" comes before "low" comes before "ok"
     const statusOrder = { out: 0, low: 1, ok: 2 };
     return [...result].sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
-  }, [items, activeCategory, searchQuery]);
+  }, [items, selectedBranchId, searchQuery]);
 
   function handleFormChange(field, value) {
     setFormData((prev) => ({ ...prev, [field]: value }));
   }
 
-  function handleAddItem() {
-    const newItem = {
-      ...formData,
-      id: Date.now(),
-      currentStock: parseFloat(formData.currentStock) || 0,
-      idealStock: parseFloat(formData.idealStock) || 0,
-      dailyUsage: parseFloat(formData.dailyUsage) || 0,
-    };
-    setItems((prev) => [...prev, newItem]);
+  async function handleSaveItem() {
+    const payload = { branch_id: formData.branch_id, name: formData.name, unit: formData.unit, current_stock: Number(formData.currentStock) || 0, safety_stock_level: Number(formData.safetyStockLevel) || 0, reorder_delay_days: Number(formData.reorderDelayDays) || 0, cost_per_unit: Number(formData.costPerUnit) || 0, shelf_life_days: formData.shelfLifeDays ? Number(formData.shelfLifeDays) : null };
+    const created = await apiRequest(editingItemId ? `/api/inventory-items/${editingItemId}` : "/api/inventory-items", { method: editingItemId ? "PATCH" : "POST", body: JSON.stringify(payload) }, session);
+    const mapped = mapInventoryItem(created);
+    setItems((prev) => editingItemId ? prev.map((item) => item.id === editingItemId ? mapped : item) : [...prev, mapped]);
     setFormData(emptyItem);
+    setEditingItemId(null);
     setIsModalOpen(false);
+  }
+
+  function openAddModal() {
+    setEditingItemId(null);
+    setFormData({ ...emptyItem, branch_id: selectedBranchId || branches[0]?.id || "" });
+    setIsModalOpen(true);
+  }
+
+  function openEditModal(item) {
+    setEditingItemId(item.id);
+    setFormData({ branch_id: item.branch_id, name: item.name, currentStock: item.currentStock, unit: item.unit, safetyStockLevel: item.safetyStockLevel, reorderDelayDays: item.reorderDelayDays, costPerUnit: item.costPerUnit, shelfLifeDays: item.shelfLifeDays || "" });
+    setIsModalOpen(true);
+  }
+
+  async function handleDeleteItem(id) {
+    if (!window.confirm("Delete this inventory item and its recipe link?")) return;
+    await apiRequest(`/api/inventory-items/${id}`, { method: "DELETE" }, session);
+    setItems((prev) => prev.filter((item) => item.id !== id));
   }
 
   return (
@@ -174,7 +126,7 @@ export default function InventoryPage() {
           </p>
         </div>
         <button
-          onClick={() => setIsModalOpen(true)}
+          onClick={openAddModal}
           className="flex items-center gap-2 bg-gradient-to-r from-orange-500 to-amber-400 text-white font-medium px-4 py-2 rounded-xl hover:opacity-90 transition"
         >
           <Plus size={18} />
@@ -217,23 +169,7 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* Copilot insight banner */}
-      {mostUrgentItem && (
-        <div className="bg-gradient-to-br from-orange-50 to-amber-50 dark:from-orange-500/10 dark:to-amber-500/10 border border-orange-200 dark:border-orange-500/20 rounded-2xl p-5 mb-6">
-          <p className="flex items-center gap-2 text-sm font-semibold text-accent mb-1">
-            <Sparkles size={16} />
-            RASOISAATHI COPILOT INSIGHT
-          </p>
-          <p className="text-ink text-sm">
-            <span className="font-semibold">{mostUrgentItem.name}</span> will
-            run out in ~{mostUrgentItem.days} day
-            {mostUrgentItem.days === 1 ? "" : "s"} at current usage. Consider
-            reordering soon to avoid a stockout.
-          </p>
-        </div>
-      )}
-
-      {/* Search + category filters */}
+      {/* Search + branch filter */}
       <div className="flex flex-col sm:flex-row gap-3 mb-5">
         <div className="relative flex-1 sm:max-w-xs">
           <Search
@@ -248,21 +184,9 @@ export default function InventoryPage() {
             className="w-full bg-surface-2 border border-border rounded-xl pl-9 pr-3 py-2 text-sm text-ink outline-none focus:ring-2 focus:ring-orange-400"
           />
         </div>
-        <div className="flex gap-2 flex-wrap">
-          {categories.map((cat) => (
-            <button
-              key={cat}
-              onClick={() => setActiveCategory(cat)}
-              className={`px-3.5 py-1.5 rounded-full text-sm font-medium transition ${
-                activeCategory === cat
-                  ? "bg-gradient-to-r from-orange-500 to-amber-400 text-white"
-                  : "bg-surface-2 text-muted hover:text-ink"
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
+        <select value={selectedBranchId} onChange={(e) => setSelectedBranchId(e.target.value)} className="bg-surface-2 border border-border rounded-xl px-3 py-2 text-sm text-ink outline-none focus:ring-2 focus:ring-orange-400">
+          {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.address || "Branch"}</option>)}
+        </select>
       </div>
 
       {/* Inventory table */}
@@ -274,7 +198,7 @@ export default function InventoryPage() {
             </div>
             <p className="font-semibold text-ink">No items found</p>
             <p className="text-muted text-sm mt-1">
-              Try a different search or category.
+              Add an inventory item to start tracking stock.
             </p>
           </div>
         ) : (
@@ -284,18 +208,15 @@ export default function InventoryPage() {
                 <th className="px-5 py-3 font-medium">Item</th>
                 <th className="px-5 py-3 font-medium">Current Stock</th>
                 <th className="px-5 py-3 font-medium">Status</th>
-                <th className="px-5 py-3 font-medium">Predicted Depletion</th>
-                <th className="px-5 py-3 font-medium">Daily Usage (AI)</th>
+                <th className="px-5 py-3 font-medium">Reorder Delay</th>
+                <th className="px-5 py-3 font-medium">Cost / Unit</th>
+                <th className="px-5 py-3 font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               {visibleItems.map((item) => {
                 const config = statusConfig[item.status];
-                const days = daysUntilEmpty(item);
-                const fillPct = Math.min(
-                  100,
-                  Math.round((item.currentStock / item.idealStock) * 100)
-                );
+                const fillPct = item.safetyStockLevel > 0 ? Math.min(100, Math.round((item.currentStock / item.safetyStockLevel) * 100)) : 100;
 
                 return (
                   <tr
@@ -304,13 +225,13 @@ export default function InventoryPage() {
                   >
                     <td className="px-5 py-4">
                       <p className="font-medium text-ink">{item.name}</p>
-                      <p className="text-xs text-muted">{item.category}</p>
+                      <p className="text-xs text-muted">Safety: {item.safetyStockLevel} {item.unit}</p>
                     </td>
                     <td className="px-5 py-4 w-48">
                       <p className="text-ink font-medium mb-1.5">
                         {item.currentStock} {item.unit}
                         <span className="text-muted font-normal">
-                          {" "}/ {item.idealStock} {item.unit}
+                          {" "}/ {item.safetyStockLevel} {item.unit}
                         </span>
                       </p>
                       <div className="w-full h-1.5 bg-surface-2 rounded-full overflow-hidden">
@@ -332,16 +253,9 @@ export default function InventoryPage() {
                         <span className={config.text}>{config.label}</span>
                       </span>
                     </td>
-                    <td className="px-5 py-4 text-ink">
-                      {item.status === "out"
-                        ? "—"
-                        : days !== null
-                        ? `~${days} day${days === 1 ? "" : "s"}`
-                        : "—"}
-                    </td>
-                    <td className="px-5 py-4 text-muted">
-                      {item.dailyUsage} {item.unit}/day
-                    </td>
+                    <td className="px-5 py-4 text-ink">{item.reorderDelayDays} days</td>
+                    <td className="px-5 py-4 text-muted">₹{item.costPerUnit}</td>
+                    <td className="px-5 py-4"><div className="flex gap-2"><button onClick={() => openEditModal(item)} className="text-muted hover:text-accent" title="Edit inventory item"><Pencil size={16} /></button><button onClick={() => handleDeleteItem(item.id)} className="text-muted hover:text-red-500" title="Delete inventory item"><Trash2 size={16} /></button></div></td>
                   </tr>
                 );
               })}
@@ -355,7 +269,7 @@ export default function InventoryPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-surface rounded-2xl p-6 w-full max-w-md">
             <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-bold text-ink">Add Stock Item</h2>
+              <h2 className="text-lg font-bold text-ink">{editingItemId ? "Edit Inventory Item" : "Add Stock Item"}</h2>
               <button
                 onClick={() => setIsModalOpen(false)}
                 className="text-muted hover:text-ink"
@@ -366,6 +280,12 @@ export default function InventoryPage() {
 
             <div className="space-y-4">
               <div>
+                <label className="text-sm text-muted mb-1 block">Branch</label>
+                <select value={formData.branch_id} onChange={(e) => handleFormChange("branch_id", e.target.value)} className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-ink outline-none focus:ring-2 focus:ring-orange-400">
+                  {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.address || "Branch"}</option>)}
+                </select>
+              </div>
+              <div>
                 <label className="text-sm text-muted mb-1 block">Item Name</label>
                 <input
                   type="text"
@@ -373,19 +293,6 @@ export default function InventoryPage() {
                   onChange={(e) => handleFormChange("name", e.target.value)}
                   className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-ink outline-none focus:ring-2 focus:ring-orange-400"
                 />
-              </div>
-
-              <div>
-                <label className="text-sm text-muted mb-1 block">Category</label>
-                <select
-                  value={formData.category}
-                  onChange={(e) => handleFormChange("category", e.target.value)}
-                  className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-ink outline-none focus:ring-2 focus:ring-orange-400"
-                >
-                  {categories.filter((c) => c !== "All").map((cat) => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -414,38 +321,32 @@ export default function InventoryPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div>
                 <div>
-                  <label className="text-sm text-muted mb-1 block">Ideal Stock Level</label>
+                  <label className="text-sm text-muted mb-1 block">Safety Stock Level</label>
                   <input
                     type="number"
-                    value={formData.idealStock}
-                    onChange={(e) => handleFormChange("idealStock", e.target.value)}
-                    className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-ink outline-none focus:ring-2 focus:ring-orange-400"
-                  />
-                </div>
-                <div>
-                  <label className="text-sm text-muted mb-1 block">Avg. Daily Usage</label>
-                  <input
-                    type="number"
-                    value={formData.dailyUsage}
-                    onChange={(e) => handleFormChange("dailyUsage", e.target.value)}
+                    value={formData.safetyStockLevel}
+                    onChange={(e) => handleFormChange("safetyStockLevel", e.target.value)}
                     className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-ink outline-none focus:ring-2 focus:ring-orange-400"
                   />
                 </div>
               </div>
 
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm text-muted mb-1 block">Reorder Delay (days)</label>
+                  <input type="number" min="0" value={formData.reorderDelayDays} onChange={(e) => handleFormChange("reorderDelayDays", e.target.value)} className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-ink outline-none focus:ring-2 focus:ring-orange-400" />
+                </div>
+                <div>
+                  <label className="text-sm text-muted mb-1 block">Cost Per Unit</label>
+                  <input type="number" min="0" value={formData.costPerUnit} onChange={(e) => handleFormChange("costPerUnit", e.target.value)} className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-ink outline-none focus:ring-2 focus:ring-orange-400" />
+                </div>
+              </div>
+
               <div>
-                <label className="text-sm text-muted mb-1 block">Status</label>
-                <select
-                  value={formData.status}
-                  onChange={(e) => handleFormChange("status", e.target.value)}
-                  className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-ink outline-none focus:ring-2 focus:ring-orange-400"
-                >
-                  <option value="ok">In Stock</option>
-                  <option value="low">Low Stock</option>
-                  <option value="out">Out of Stock</option>
-                </select>
+                <label className="text-sm text-muted mb-1 block">Shelf Life (days)</label>
+                <input type="number" min="0" value={formData.shelfLifeDays} onChange={(e) => handleFormChange("shelfLifeDays", e.target.value)} className="w-full bg-surface-2 border border-border rounded-xl px-3 py-2 text-ink outline-none focus:ring-2 focus:ring-orange-400" />
               </div>
             </div>
 
@@ -457,10 +358,10 @@ export default function InventoryPage() {
                 Cancel
               </button>
               <button
-                onClick={handleAddItem}
+                onClick={handleSaveItem}
                 className="flex-1 bg-gradient-to-r from-orange-500 to-amber-400 text-white font-medium py-2.5 rounded-xl hover:opacity-90 transition"
               >
-                Add Item
+                {editingItemId ? "Save Changes" : "Add Item"}
               </button>
             </div>
           </div>

@@ -18,6 +18,7 @@ class Order(Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
     restaurant_id: Mapped[UUID] = mapped_column(ForeignKey("restaurants.id"), index=True, nullable=False)
     branch_id: Mapped[UUID] = mapped_column(ForeignKey("branches.id"), index=True, nullable=False)
+    customer_id: Mapped[UUID | None] = mapped_column(ForeignKey("customers.id"), index=True)
     order_source: Mapped[str] = mapped_column(String(30), nullable=False)
     order_type: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -28,4 +29,5 @@ class Order(Base):
 
     restaurant: Mapped["Restaurant"] = relationship(back_populates="orders")
     branch: Mapped["Branch"] = relationship(back_populates="orders")
+    customer: Mapped["Customer | None"] = relationship(back_populates="orders")
     order_items: Mapped[list["OrderItem"]] = relationship(back_populates="order")

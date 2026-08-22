@@ -21,6 +21,7 @@ class Restaurant(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     branches: Mapped[list["Branch"]] = relationship(back_populates="restaurant")
+    customers: Mapped[list["Customer"]] = relationship(back_populates="restaurant")
     users: Mapped[list["User"]] = relationship(back_populates="restaurant")
     menu_items: Mapped[list["MenuItem"]] = relationship(back_populates="restaurant")
     subscriptions: Mapped[list["Subscription"]] = relationship(back_populates="restaurant")
