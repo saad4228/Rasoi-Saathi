@@ -32,7 +32,67 @@
 
 ---
 
-## 2. Complete System Architecture & Authentication Flow
+## 2. System Architecture & Flow
+
+### 🌟 High-Level Architecture Overview (Simplified)
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#EEF2FF', 'primaryTextColor': '#1E1B4B', 'primaryBorderColor': '#6366F1', 'lineColor': '#4F46E5', 'secondaryColor': '#F5F3FF', 'tertiaryColor': '#FAFAFA', 'fontSize': '14px'}}}%%
+flowchart TD
+    %% Section 1: Who Uses It
+    subgraph USERS ["👥 1. USERS & CUSTOMERS"]
+        direction LR
+        Staff["👑 Owner / 🍳 Chef / 🛎️ Waiter\n(Staff Dashboard & POS)"]
+        Customer["📱 WhatsApp Customer\n(Orders in Natural Language)"]
+    end
+
+    %% Section 2: Frontend & Gateways
+    subgraph INGRESS ["💻 2. FRONTEND & MESSAGING"]
+        direction LR
+        NextApp["💻 Next.js 14 Web App\n(Dashboard, Orders KDS, Menu, Inventory)"]
+        TwilioWA["💬 Twilio WhatsApp Gateway\n(Receives WhatsApp Messages)"]
+    end
+
+    %% Section 3: Core Backend
+    subgraph BACKEND ["⚡ 3. FASTAPI BACKEND & AI SERVICES"]
+        direction TB
+        API["⚙️ FastAPI REST Server\n(Business Logic, RBAC & Order Processing)"]
+        
+        subgraph ENGINES ["Intelligence & Analytics"]
+            direction LR
+            Gemini["✨ Gemini 3.5 Flash Lite\n• Parses WhatsApp Orders\n• Powers AI Copilot"]
+            XGBoost["📈 XGBoost ML\n• 7-Day Demand Forecasting\n• Stockout Alerts"]
+        end
+        API <--> ENGINES
+    end
+
+    %% Section 4: Data & Identity
+    subgraph STORAGE ["🗄️ 4. DATABASE & AUTH (SUPABASE)"]
+        direction LR
+        SupaAuth["🔐 Supabase Auth\n(User Logins & JWT Tokens)"]
+        PostgresDB[("🐘 PostgreSQL Database\n(Restaurants, Orders, Menu, Inventory)")]
+    end
+
+    %% Simple Clear Connections
+    Staff --> NextApp
+    Customer <--> TwilioWA
+
+    NextApp -->|1. Sign In & Verify| SupaAuth
+    NextApp -->|2. REST API Calls| API
+    TwilioWA <-->|3. Webhook POST / WhatsApp Reply| API
+
+    API <-->|4. Read / Write Data| PostgresDB
+    API -->|5. Outbound WhatsApp Alert When Order READY| TwilioWA
+
+    classDef primary fill:#EEF2FF,stroke:#4F46E5,stroke-width:2px,color:#1E1B4B;
+    classDef secondary fill:#F5F3FF,stroke:#7C3AED,stroke-width:2px,color:#312E81;
+    class USERS,INGRESS,BACKEND,STORAGE primary;
+    class ENGINES secondary;
+```
+
+---
+
+### 🔍 Detailed Tier-by-Tier Component Breakdown
 
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#EEF2FF', 'primaryTextColor': '#312E81', 'primaryBorderColor': '#6366F1', 'lineColor': '#4F46E5', 'secondaryColor': '#F5F3FF', 'tertiaryColor': '#FAFAFA', 'fontSize': '13px'}}}%%
