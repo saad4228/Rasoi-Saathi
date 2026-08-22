@@ -12,6 +12,11 @@ class Settings(BaseSettings):
 	gemini_api_key: str | None = None
 	gemini_model: str = "gemini-3.5-flash-lite"
 
+	# Twilio WhatsApp Configuration
+	twilio_account_sid: str | None = None
+	twilio_auth_token: str | None = None
+	twilio_whatsapp_number: str = "whatsapp:+17372508034"
+
 	model_config = SettingsConfigDict(
 		env_file=".env",
 		env_file_encoding="utf-8",
@@ -30,5 +35,6 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
 	return Settings()
+
 
 settings = Settings()

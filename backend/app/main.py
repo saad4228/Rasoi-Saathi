@@ -8,6 +8,7 @@ from app.config import get_settings
 from app.routers.auth import router as auth_router
 from app.routers.copilot import router as copilot_router
 from app.routers.operations import router as operations_router
+from app.routers.whatsapp import router as whatsapp_router
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(copilot_router)
 app.include_router(operations_router)
+app.include_router(whatsapp_router)
 
 
 @app.exception_handler(Exception)

@@ -400,6 +400,25 @@ def update_order(order_id: UUID, payload: OrderStatusUpdate, user: User = Depend
     order.status = payload.status
     db.commit()
     db.refresh(order)
+
+    # If Chef marks order as READY, proactively notify WhatsApp customer
+    if payload.status == "READY" and order.customer_id is not None:
+        customer = db.get(Customer, order.customer_id)
+        if customer and customer.phone:
+            restaurant = db.get(Restaurant, order.restaurant_id)
+            rest_name = restaurant.name if restaurant else "Restaurant"
+            items_text = ", ".join([f"{item.quantity}x {item.menu_item.name}" for item in order.order_items if item.menu_item])
+            try:
+                from app.services.whatsapp_bot import send_whatsapp_order_ready_notification
+                send_whatsapp_order_ready_notification(
+                    customer_phone=customer.phone,
+                    restaurant_name=rest_name,
+                    order_id=str(order.id),
+                    items_summary=items_text or "Dishes",
+                    order_type=order.order_type,
+                )
+            except Exception as notify_err:
+                logger.warning("Could not dispatch WhatsApp ready notification: %s", notify_err)
     return OrderResponse(
         id=order.id,
         branch_id=order.branch_id,
