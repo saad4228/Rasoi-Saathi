@@ -9,6 +9,8 @@ class Settings(BaseSettings):
 	supabase_jwt_audience: str = "authenticated"
 	supabase_jwt_issuer: str | None = None
 	frontend_url: str = "http://localhost:3000"
+	gemini_api_key: str | None = None
+	gemini_model: str = "gemini-3.5-flash-lite"
 
 	model_config = SettingsConfigDict(
 		env_file=".env",

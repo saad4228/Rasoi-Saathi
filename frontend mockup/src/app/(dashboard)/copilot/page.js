@@ -1,7 +1,8 @@
 "use client";
-import Image from "next/image";
 import { useState, useRef, useEffect } from "react";
 import { Send, Sparkles, TrendingUp, Package, Receipt } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import { apiRequest } from "@/services/api";
 
 const suggestedPrompts = [
   "Why did my profit drop this week?",
@@ -10,51 +11,54 @@ const suggestedPrompts = [
   "Which dish is losing me money?",
 ];
 
-// Mock canned response — replace with real API call later
-function getMockResponse(question) {
-  if (question.toLowerCase().includes("biryani") || question.toLowerCase().includes("price")) {
-    return {
-      type: "structured",
-      intro: "Based on your historical data, here's what we estimate:",
-      points: [
-        "Estimated 6% drop in Biryani orders (~120 fewer/month) if you raise the price by ₹10.",
-        "That's about ₹6,000/month lost from fewer orders.",
-        "But the remaining ~1,880 orders each earn ₹10 more — about ₹18,800/month gained.",
-      ],
-      netEffect: "+₹12,800/month.",
-      recommendation: "Go ahead — the price increase is worth it.",
-      basedOn: ["Sales", "Inventory", "Orders", "Expenses"],
-    };
-  }
-  return {
-    type: "plain",
-    text: "I've looked at your recent sales, inventory, and order data — let me know if you'd like me to break down a specific number, like revenue, waste, or a pricing decision.",
-    basedOn: ["Sales", "Inventory", "Orders"],
-  };
-}
-
 export default function CopilotPage() {
+  const { session } = useAuth();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [branches, setBranches] = useState([]);
+  const [branchId, setBranchId] = useState("");
+  const [error, setError] = useState("");
   const scrollRef = useRef(null);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
-  const sendMessage = (text) => {
+  useEffect(() => {
+    if (!session) return;
+    apiRequest("/api/branches", {}, session)
+      .then((loadedBranches) => {
+        setBranches(loadedBranches);
+        setBranchId((current) => current || loadedBranches[0]?.id || "");
+      })
+      .catch((requestError) => setError(requestError.message || "Unable to load branches."));
+  }, [session]);
+
+  const sendMessage = async (text) => {
     if (!text.trim()) return;
 
     setMessages((prev) => [...prev, { role: "user", text }]);
     setInput("");
     setIsTyping(true);
+    setError("");
 
-    setTimeout(() => {
-      const response = getMockResponse(text);
-      setMessages((prev) => [...prev, { role: "assistant", ...response }]);
+    try {
+      const response = await apiRequest("/api/copilot/chat", {
+        method: "POST",
+        body: JSON.stringify({ message: text, branch_id: branchId || null }),
+      }, session);
+      setMessages((prev) => [...prev, {
+        role: "assistant",
+        type: "plain",
+        text: response.answer,
+        basedOn: ["Live restaurant data"],
+      }]);
+    } catch (requestError) {
+      setError(requestError.message || "The Copilot could not answer right now.");
+    } finally {
       setIsTyping(false);
-    }, 900);
+    }
   };
 
   return (
@@ -77,24 +81,33 @@ export default function CopilotPage() {
           <p className="font-semibold text-ink text-sm">RasoiSaathi Copilot</p>
           <p className="text-xs text-muted flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-            Online · Red Villa Restaurant
+            Live restaurant data
           </p>
         </div>
+        {branches.length > 0 && (
+          <select
+            value={branchId}
+            onChange={(event) => setBranchId(event.target.value)}
+            className="ml-auto bg-surface-2 border border-border rounded-lg px-3 py-2 text-xs text-ink outline-none"
+            aria-label="Selected branch"
+          >
+            {branches.map((branch) => (
+              <option key={branch.id} value={branch.id}>{branch.address || "Branch"}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Chat area */}
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
         {messages.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-center px-4">
-            {/* One-liner greeting */}
             <div className="flex items-center gap-3 mb-8">
               <Sparkles className="w-7 h-7 text-orange-500" strokeWidth={1.5} />
               <h2 className="text-3xl font-serif text-ink">
                 What shall we cook up today?
               </h2>
             </div>
-
-            {/* Suggested prompt chips */}
             <div className="flex flex-wrap justify-center gap-2 max-w-lg">
               {suggestedPrompts.map((prompt) => (
                 <button
@@ -114,6 +127,12 @@ export default function CopilotPage() {
         ))}
 
         {isTyping && <TypingBubble />}
+
+        {error && (
+          <p className="text-sm text-red-500 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+            {error}
+          </p>
+        )}
 
         <div ref={scrollRef} />
       </div>
@@ -147,50 +166,161 @@ export default function CopilotPage() {
   );
 }
 
+// ─── Inline Markdown Renderer ────────────────────────────────────────────────
+// No external dependencies — handles ### headings, **bold**, *italic*,
+// `code`, bullet lists, numbered lists, and horizontal rules.
+
+function renderInline(text, keyPrefix = "") {
+  const parts = [];
+  const re = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`)/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    if (m[2] !== undefined)
+      parts.push(<strong key={keyPrefix + m.index} className="font-semibold text-ink">{m[2]}</strong>);
+    else if (m[3] !== undefined)
+      parts.push(<em key={keyPrefix + m.index} className="italic text-ink/80">{m[3]}</em>);
+    else if (m[4] !== undefined)
+      parts.push(
+        <code key={keyPrefix + m.index} className="px-1.5 py-0.5 rounded bg-orange-50 text-accent text-xs font-mono border border-orange-100">
+          {m[4]}
+        </code>
+      );
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts.length ? parts : [text];
+}
+
+function MarkdownBlock({ text }) {
+  if (!text) return null;
+  const lines = text.split("\n");
+  const elements = [];
+  let listBuffer = [];
+  let listType = null;
+
+  const flushList = (key) => {
+    if (!listBuffer.length) return;
+    if (listType === "ol") {
+      elements.push(
+        <ol key={"ol-" + key} className="list-none space-y-1.5 my-2.5 pl-1">
+          {listBuffer.map((item, i) => (
+            <li key={i} className="text-sm text-ink leading-relaxed flex gap-2.5">
+              <span className="shrink-0 w-5 h-5 rounded-full bg-accent/10 text-accent text-xs font-bold flex items-center justify-center mt-0.5">
+                {i + 1}
+              </span>
+              <span>{renderInline(item, `ol-${key}-${i}`)}</span>
+            </li>
+          ))}
+        </ol>
+      );
+    } else {
+      elements.push(
+        <ul key={"ul-" + key} className="space-y-1.5 my-2.5">
+          {listBuffer.map((item, i) => (
+            <li key={i} className="text-sm text-ink leading-relaxed flex gap-2.5">
+              <span className="mt-2 w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+              <span>{renderInline(item, `ul-${key}-${i}`)}</span>
+            </li>
+          ))}
+        </ul>
+      );
+    }
+    listBuffer = [];
+    listType = null;
+  };
+
+  lines.forEach((raw, idx) => {
+    const line = raw.trimEnd();
+
+    // Horizontal rule
+    if (/^---+$/.test(line.trim())) {
+      flushList(idx);
+      elements.push(<hr key={idx} className="my-4 border-border" />);
+      return;
+    }
+
+    // ### Heading 3
+    const h3 = line.match(/^###\s+(.+)/);
+    if (h3) {
+      flushList(idx);
+      elements.push(
+        <h3 key={idx} className="text-sm font-bold text-ink mt-5 mb-1.5 first:mt-0 tracking-tight">
+          {renderInline(h3[1], `h3-${idx}`)}
+        </h3>
+      );
+      return;
+    }
+
+    // ## Heading 2
+    const h2 = line.match(/^##\s+(.+)/);
+    if (h2) {
+      flushList(idx);
+      elements.push(
+        <h2 key={idx} className="text-base font-extrabold text-ink mt-5 mb-2 first:mt-0 tracking-tight">
+          {renderInline(h2[1], `h2-${idx}`)}
+        </h2>
+      );
+      return;
+    }
+
+    // Bullet list item  (-, *, •)
+    const ulItem = line.match(/^[-*•]\s+(.+)/);
+    if (ulItem) {
+      if (listType === "ol") flushList(idx);
+      listType = "ul";
+      listBuffer.push(ulItem[1]);
+      return;
+    }
+
+    // Numbered list item  (1. 2. …)
+    const olItem = line.match(/^\d+\.\s+(.+)/);
+    if (olItem) {
+      if (listType === "ul") flushList(idx);
+      listType = "ol";
+      listBuffer.push(olItem[1]);
+      return;
+    }
+
+    // Empty line — flush list, add gap
+    if (line.trim() === "") {
+      flushList(idx);
+      elements.push(<div key={idx} className="h-1.5" />);
+      return;
+    }
+
+    // Regular paragraph
+    flushList(idx);
+    elements.push(
+      <p key={idx} className="text-sm text-ink leading-relaxed">
+        {renderInline(line, `p-${idx}`)}
+      </p>
+    );
+  });
+
+  flushList("end");
+  return <div className="space-y-0.5">{elements}</div>;
+}
+
+// ─── Chat Bubbles ─────────────────────────────────────────────────────────────
+
 function ChatBubble({ message }) {
   if (message.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-md bg-gradient-to-r from-orange-500 to-amber-400 text-white text-sm font-medium px-4 py-2.5 rounded-2xl rounded-tr-sm">
+        <div className="max-w-lg bg-gradient-to-r from-orange-500 to-amber-400 text-white text-sm font-medium px-4 py-3 rounded-2xl rounded-tr-sm leading-relaxed shadow-sm">
           {message.text}
         </div>
       </div>
     );
   }
 
-  // Assistant message
-  if (message.type === "structured") {
-    return (
-      <div className="flex justify-start">
-        <div className="max-w-lg bg-surface border border-border rounded-2xl rounded-tl-sm p-4">
-          <p className="text-sm text-ink mb-2">{message.intro}</p>
-          <ol className="space-y-1.5 mb-3">
-            {message.points.map((point, i) => (
-              <li key={i} className="text-sm text-muted flex gap-2">
-                <span className="text-accent font-semibold">{i + 1}.</span>
-                <span>{point}</span>
-              </li>
-            ))}
-          </ol>
-          <div className="border-t border-border pt-3">
-            <p className="text-sm text-ink">
-              <span className="font-semibold">Net effect:</span>{" "}
-              <span className="text-green-500 font-bold">{message.netEffect}</span>
-            </p>
-            <p className="text-sm text-ink mt-1">
-              <span className="font-semibold">Recommendation:</span> {message.recommendation}
-            </p>
-          </div>
-          <BasedOnTags tags={message.basedOn} />
-        </div>
-      </div>
-    );
-  }
-
+  // Assistant — render with markdown
   return (
     <div className="flex justify-start">
-      <div className="max-w-md bg-surface border border-border rounded-2xl rounded-tl-sm p-4">
-        <p className="text-sm text-ink">{message.text}</p>
+      <div className="max-w-2xl bg-surface border border-border rounded-2xl rounded-tl-sm px-5 py-4 shadow-sm">
+        <MarkdownBlock text={message.text} />
         <BasedOnTags tags={message.basedOn} />
       </div>
     </div>
@@ -198,9 +328,9 @@ function ChatBubble({ message }) {
 }
 
 function BasedOnTags({ tags }) {
-  const icons = { Sales: TrendingUp, Inventory: Package, Orders: Receipt, Expenses: Receipt };
+  if (!tags || tags.length === 0) return null;
   return (
-    <div className="flex flex-wrap items-center gap-1.5 mt-3 pt-3 border-t border-border">
+    <div className="flex flex-wrap items-center gap-1.5 mt-4 pt-3 border-t border-border">
       <span className="text-[10px] text-muted uppercase tracking-wide font-semibold mr-1">
         Based on:
       </span>
@@ -219,7 +349,7 @@ function BasedOnTags({ tags }) {
 function TypingBubble() {
   return (
     <div className="flex justify-start">
-      <div className="bg-surface border border-border rounded-2xl rounded-tl-sm px-4 py-3 flex gap-1">
+      <div className="bg-surface border border-border rounded-2xl rounded-tl-sm px-4 py-3 flex gap-1.5 shadow-sm">
         <span className="w-1.5 h-1.5 rounded-full bg-muted animate-bounce [animation-delay:-0.3s]" />
         <span className="w-1.5 h-1.5 rounded-full bg-muted animate-bounce [animation-delay:-0.15s]" />
         <span className="w-1.5 h-1.5 rounded-full bg-muted animate-bounce" />
