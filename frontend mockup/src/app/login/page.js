@@ -16,8 +16,15 @@ export default function LoginPage() {
     event.preventDefault(); setBusy(true); setError("");
     if (!supabase) { setError("Supabase is not configured. Check your .env.local file."); setBusy(false); return; }
     try { 
-      await signIn(form.email, form.password); 
-      router.replace("/dashboard"); 
+      const result = await signIn(form.email, form.password); 
+      const userRole = result?.applicationUser?.role?.toLowerCase();
+      if (userRole === "waiter") {
+        router.replace("/waiter-orders");
+      } else if (userRole === "chef") {
+        router.replace("/orders");
+      } else {
+        router.replace("/dashboard");
+      }
     }
     catch (requestError) { setError(requestError.status === 401 ? "Your account is not active in Rasoi Sathi yet." : requestError.message || "Unable to sign in."); }
     finally { setBusy(false); }

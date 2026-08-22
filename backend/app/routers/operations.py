@@ -21,6 +21,7 @@ from app.models.menu_item_ingredient import MenuItemIngredient
 from app.models.order import Order
 from app.models.order_item import OrderItem
 from app.models.purchase_order_item import PurchaseOrderItem
+from app.models.restaurant import Restaurant
 from app.models.restaurant_module import RestaurantModule
 from app.models.subscription import Subscription
 from app.models.user import User
@@ -28,6 +29,7 @@ from app.schemas.operations import (
     BranchCreate, BranchResponse, CustomerCreate, CustomerResponse, ForecastResponse, InventoryItemCreate,
     InventoryItemResponse, InventoryItemUpdate, MenuItemCreate, MenuItemResponse, MenuItemUpdate,
     OrderCreate, OrderResponse, OrderStatusUpdate, SubscriptionResponse,
+    StaffMemberCreate, StaffMemberResponse, StaffMemberUpdate,
 )
 
 router = APIRouter(prefix="/api", tags=["operations"])
@@ -40,9 +42,37 @@ def branch_for_user(db: Session, user: User, branch_id: UUID) -> Branch:
     return branch
 
 
+@router.get("/restaurant")
+def get_restaurant(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    restaurant = db.get(Restaurant, user.restaurant_id)
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+    return {
+        "id": restaurant.id,
+        "name": restaurant.name,
+        "email": restaurant.email,
+        "phone": restaurant.phone,
+    }
+
+
 @router.get("/branches", response_model=list[BranchResponse])
 def list_branches(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return db.scalars(select(Branch).where(Branch.restaurant_id == user.restaurant_id).order_by(Branch.address)).all()
+    restaurant = db.get(Restaurant, user.restaurant_id)
+    rest_name = restaurant.name if restaurant else "My Restaurant"
+    branches = db.scalars(select(Branch).where(Branch.restaurant_id == user.restaurant_id).order_by(Branch.address)).all()
+    return [
+        BranchResponse(
+            id=b.id,
+            restaurant_name=rest_name,
+            address=b.address,
+            phone=b.phone,
+            is_active=b.is_active,
+            supports_dine_in=b.supports_dine_in,
+            supports_takeaway=b.supports_takeaway,
+            supports_delivery=b.supports_delivery,
+        )
+        for b in branches
+    ]
 
 
 @router.post("/branches", response_model=BranchResponse, status_code=status.HTTP_201_CREATED)
@@ -489,7 +519,13 @@ def dashboard_summary(user: User = Depends(get_current_user), db: Session = Depe
     today = date.today()
     chart_start = today - timedelta(days=6)
     orders = db.scalars(select(Order).where(Order.restaurant_id == user.restaurant_id, func.date(Order.ordered_at) == today)).all()
-    recent = db.scalars(select(Order).where(Order.restaurant_id == user.restaurant_id).order_by(Order.ordered_at.desc()).limit(5)).all()
+    recent = db.scalars(
+        select(Order)
+        .options(selectinload(Order.order_items).selectinload(OrderItem.menu_item), selectinload(Order.branch))
+        .where(Order.restaurant_id == user.restaurant_id)
+        .order_by(Order.ordered_at.desc())
+        .limit(8)
+    ).all()
     low_stock = db.scalar(select(func.count()).select_from(InventoryItem).join(Branch).where(Branch.restaurant_id == user.restaurant_id, InventoryItem.current_stock <= InventoryItem.safety_stock_level)) or 0
     total = sum((order.total_amount for order in orders), Decimal("0"))
     daily_rows = db.execute(
@@ -504,7 +540,35 @@ def dashboard_summary(user: User = Depends(get_current_user), db: Session = Depe
         series_day = chart_start + timedelta(days=offset)
         row = daily_by_date.get(series_day)
         revenue_series.append({"day": series_day, "revenue": row.revenue if row else Decimal("0"), "orders": row.orders if row else 0})
-    return {"today_revenue": total, "today_orders": len(orders), "avg_order_value": total / len(orders) if orders else Decimal("0"), "low_stock_count": low_stock, "total_revenue": total, "revenue_series": revenue_series, "recent_orders": [{"id": str(o.id), "source": o.order_source, "status": o.status, "total": o.total_amount, "ordered_at": o.ordered_at} for o in recent], "insight": None}
+
+    recent_orders = [
+        {
+            "id": str(o.id),
+            "display_id": str(o.id)[:8],
+            "source": o.order_source,
+            "order_type": o.order_type,
+            "status": o.status,
+            "total": float(o.total_amount),
+            "ordered_at": o.ordered_at.isoformat(),
+            "branch_name": o.branch.address if o.branch else "Main Kitchen",
+            "item_summary": ", ".join([f"{item.quantity}x {item.menu_item.name}" for item in o.order_items if item.menu_item]) if o.order_items else "Kitchen items",
+            "items_count": sum(item.quantity for item in o.order_items),
+        }
+        for o in recent
+    ]
+
+    total_7d = sum((row.revenue for row in daily_by_date.values()), Decimal("0"))
+
+    return {
+        "today_revenue": total,
+        "today_orders": len(orders),
+        "avg_order_value": total / len(orders) if orders else Decimal("0"),
+        "low_stock_count": low_stock,
+        "total_revenue": total_7d if total_7d > 0 else total,
+        "revenue_series": revenue_series,
+        "recent_orders": recent_orders,
+        "insight": "Live operational summary loaded from PostgreSQL database.",
+    }
 
 
 # ─── XGBoost Reorder Alerts ───────────────────────────────────────────────────
@@ -532,4 +596,101 @@ def get_reorder_alerts(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Forecaster error: {exc}",
         ) from exc
-    return alerts
+    return alerts
+
+
+# ─── Staff & Roles Management ───────────────────────────────────────────────
+
+@router.get("/staff", response_model=list[StaffMemberResponse])
+def list_staff(
+    user: User = Depends(require_roles("owner")),
+    db: Session = Depends(get_db),
+):
+    """List all staff members and roles for the owner's restaurant."""
+    return db.scalars(
+        select(User)
+        .where(User.restaurant_id == user.restaurant_id)
+        .order_by(User.created_at.asc())
+    ).all()
+
+
+@router.post("/staff", response_model=StaffMemberResponse, status_code=status.HTTP_201_CREATED)
+def create_or_assign_staff(
+    payload: StaffMemberCreate,
+    user: User = Depends(require_roles("owner")),
+    db: Session = Depends(get_db),
+):
+    """Create or link a staff member (Chef / Waiter) to this restaurant."""
+    target_id = payload.user_id or uuid4()
+
+    existing_user = db.scalar(
+        select(User).where((User.id == target_id) | (User.email == payload.email))
+    )
+
+    if existing_user is not None:
+        existing_user.restaurant_id = user.restaurant_id
+        existing_user.name = payload.name
+        existing_user.role = payload.role
+        existing_user.is_active = True
+        db.commit()
+        db.refresh(existing_user)
+        return existing_user
+
+    new_user = User(
+        id=target_id,
+        restaurant_id=user.restaurant_id,
+        email=payload.email,
+        name=payload.name,
+        role=payload.role,
+        is_active=True,
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+
+@router.patch("/staff/{staff_id}", response_model=StaffMemberResponse)
+def update_staff_member(
+    staff_id: UUID,
+    payload: StaffMemberUpdate,
+    user: User = Depends(require_roles("owner")),
+    db: Session = Depends(get_db),
+):
+    """Update role, name, or active status for a staff member."""
+    staff = db.scalar(
+        select(User).where(User.id == staff_id, User.restaurant_id == user.restaurant_id)
+    )
+    if staff is None:
+        raise HTTPException(status_code=404, detail="Staff member not found")
+
+    if staff.id == user.id and payload.is_active is False:
+        raise HTTPException(status_code=400, detail="Cannot deactivate your own owner account")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        if value is not None:
+            setattr(staff, field, value)
+
+    db.commit()
+    db.refresh(staff)
+    return staff
+
+
+@router.delete("/staff/{staff_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_staff_member(
+    staff_id: UUID,
+    user: User = Depends(require_roles("owner")),
+    db: Session = Depends(get_db),
+):
+    """Remove a staff member from the restaurant."""
+    if staff_id == user.id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own owner account")
+
+    staff = db.scalar(
+        select(User).where(User.id == staff_id, User.restaurant_id == user.restaurant_id)
+    )
+    if staff is None:
+        raise HTTPException(status_code=404, detail="Staff member not found")
+
+    db.delete(staff)
+    db.commit()

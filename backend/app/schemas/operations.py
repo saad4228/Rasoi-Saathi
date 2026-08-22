@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class BranchResponse(BaseModel):
     id: UUID
+    restaurant_name: str | None = None
     address: str | None
     phone: str | None
     is_active: bool
@@ -174,3 +175,27 @@ class SubscriptionResponse(BaseModel):
     start_date: datetime
     end_date: datetime | None
     model_config = ConfigDict(from_attributes=True)
+
+
+class StaffMemberResponse(BaseModel):
+    id: UUID
+    restaurant_id: UUID
+    name: str
+    email: str
+    role: str
+    is_active: bool
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class StaffMemberCreate(BaseModel):
+    user_id: UUID | None = None
+    name: str = Field(min_length=1, max_length=150)
+    email: str = Field(min_length=3, max_length=255)
+    role: str = Field(pattern="^(owner|chef|waiter)$")
+
+
+class StaffMemberUpdate(BaseModel):
+    name: str | None = None
+    role: str | None = Field(default=None, pattern="^(owner|chef|waiter)$")
+    is_active: bool | None = None

@@ -1,55 +1,65 @@
 "use client";
 
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useState, useEffect } from "react";
+import { useAuth } from "@/context/AuthContext";
+import { apiRequest } from "@/services/api";
 
-// The list of outlets lives here now — this is the ONE place it's defined.
-// Both the Topbar switcher and the Outlets page will read from here.
-const outlets = [
-  {
-    id: 1,
-    name: "Red Villa Restaurant",
-    area: "Andheri West",
-    isPrimary: true,
-    status: "Active",
-    address: "Shop 4, Linking Road, Andheri West, Mumbai",
-    phone: "+91 98765 43210",
-    cuisine: "North Indian, Chinese",
-    openTime: "11:00 AM",
-    closeTime: "11:00 PM",
-    gst: "27ABCDE1234F1Z5",
-    fssai: "12345678901234",
-  },
-  {
-    id: 2,
-    name: "Red Villa Restaurant",
-    area: "Powai",
-    isPrimary: false,
-    status: "Active",
-    address: "Unit 12, Hiranandani Gardens, Powai, Mumbai",
-    phone: "+91 91234 56789",
-    cuisine: "North Indian, Chinese",
-    openTime: "12:00 PM",
-    closeTime: "10:30 PM",
-    gst: "27ABCDE1234F1Z6",
-    fssai: "12345678901235",
-  },
-];
-
-// This is the "box" itself — starts empty, gets filled in by the Provider below
 const OutletContext = createContext(null);
 
-// This wraps your whole dashboard and makes the outlet data + active outlet
-// available to any page or component nested inside it
 export function OutletProvider({ children }) {
-  const [outletList, setOutletList] = useState(outlets);
-  const [activeOutletId, setActiveOutletId] = useState(1);
+  const { session, applicationUser } = useAuth();
+  const [outletList, setOutletList] = useState([]);
+  const [activeOutletId, setActiveOutletId] = useState(null);
 
-  const activeOutlet = outletList.find((o) => o.id === activeOutletId);
+  useEffect(() => {
+    if (!session) return;
+
+    apiRequest("/api/branches", {}, session)
+      .then((branches) => {
+        if (Array.isArray(branches) && branches.length > 0) {
+          const restaurantName =
+            applicationUser?.restaurant_name ||
+            branches[0]?.restaurant_name ||
+            applicationUser?.name ||
+            "Saffron Junction";
+
+          const formatted = branches.map((b, idx) => ({
+            id: b.id,
+            name: restaurantName,
+            area: b.address || `Branch ${idx + 1}`,
+            isPrimary: idx === 0,
+            status: b.is_active ? "Active" : "Inactive",
+            address: b.address || "Main Branch",
+            phone: b.phone || "",
+            cuisine: "North Indian, Chinese",
+            openTime: "11:00 AM",
+            closeTime: "11:00 PM",
+            gst: "27ABCDE1234F1Z5",
+            fssai: "12345678901234",
+          }));
+
+          setOutletList(formatted);
+          setActiveOutletId(formatted[0].id);
+        }
+      })
+      .catch(() => {});
+  }, [session, applicationUser]);
+
+  const activeOutlet =
+    outletList.find((o) => o.id === activeOutletId) ||
+    outletList[0] || {
+      id: "default",
+      name: applicationUser?.restaurant_name || applicationUser?.name || "Saffron Junction",
+      area: "Main Kitchen",
+      isPrimary: true,
+      status: "Active",
+      address: "Main Branch",
+    };
 
   const value = {
     outlets: outletList,
     setOutlets: setOutletList,
-    activeOutletId,
+    activeOutletId: activeOutlet?.id,
     setActiveOutletId,
     activeOutlet,
   };
@@ -59,8 +69,6 @@ export function OutletProvider({ children }) {
   );
 }
 
-// A little shortcut hook — instead of importing useContext + OutletContext
-// everywhere, any file can just call useOutlets() to get everything above
 export function useOutlets() {
   const context = useContext(OutletContext);
   if (!context) {

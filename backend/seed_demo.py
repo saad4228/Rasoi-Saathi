@@ -42,7 +42,9 @@ MODULE_IDS = {
 }
 USER_IDS = {
     "owner": AUTH_OWNER_ID,
-    "chef": UUID("2f3c7d18-9f0f-4f3f-9f73-8ec6b8d0a021"),
+    "chef": UUID("6af7d9ca-3fb5-4be2-b75b-626ad65b9957"),
+    "waiter": UUID("e1a4072c-db6a-446d-81c0-640e71a08bb4"),
+    "chef_demo": UUID("2f3c7d18-9f0f-4f3f-9f73-8ec6b8d0a021"),
     "waiter_one": UUID("2f3c7d18-9f0f-4f3f-9f73-8ec6b8d0a022"),
     "waiter_two": UUID("2f3c7d18-9f0f-4f3f-9f73-8ec6b8d0a023"),
 }
@@ -158,8 +160,10 @@ def seed(session: Session) -> None:
         )
 
     user_data = [
-        ("owner", "Aarav Mehta", "aarav@saffronjunction.demo", "owner"),
-        ("chef", "Mira Kulkarni", "mira@saffronjunction.demo", "chef"),
+        ("owner", "Sambodhi Bhowal", "sambodhibhowal@gmail.com", "owner"),
+        ("chef", "Head Chef", "chef@saffronjunction.demo", "chef"),
+        ("waiter", "Main Waiter", "waiter@saffronjunction.demo", "waiter"),
+        ("chef_demo", "Mira Kulkarni", "mira@saffronjunction.demo", "chef"),
         ("waiter_one", "Rohan Patil", "rohan@saffronjunction.demo", "waiter"),
         ("waiter_two", "Isha Deshmukh", "isha@saffronjunction.demo", "waiter"),
     ]

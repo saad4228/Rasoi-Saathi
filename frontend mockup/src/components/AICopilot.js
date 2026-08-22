@@ -37,7 +37,7 @@ export default function AICopilot() {
             <div className="w-9 h-9 rounded-full bg-gradient-to-r from-accent to-accent-2" />
             <div>
               <p className="font-bold text-sm text-ink">RasoiSaathi Copilot</p>
-              <p className="text-xs text-green-500">● Online · Red Villa Restaurant</p>
+              <p className="text-xs text-green-500">● Online · Connected to Live Database</p>
             </div>
           </div>
           <div className="bg-gradient-to-r from-accent to-accent-2 text-white text-sm font-semibold rounded-lg px-4 py-2.5 w-fit mb-4 ml-auto">

@@ -13,35 +13,6 @@ import {
   CheckCircle2,
 } from "lucide-react";
 
-const initialOutlets = [
-  {
-    id: 1,
-    name: "Red Villa Restaurant",
-    isPrimary: true,
-    status: "Active",
-    address: "Shop 4, Linking Road, Andheri West, Mumbai",
-    phone: "+91 98765 43210",
-    cuisine: "North Indian, Chinese",
-    openTime: "11:00 AM",
-    closeTime: "11:00 PM",
-    gst: "27ABCDE1234F1Z5",
-    fssai: "12345678901234",
-  },
-  {
-    id: 2,
-    name: "Red Villa Restaurant",
-    isPrimary: false,
-    status: "Active",
-    address: "Unit 12, Hiranandani Gardens, Powai, Mumbai",
-    phone: "+91 91234 56789",
-    cuisine: "North Indian, Chinese",
-    openTime: "12:00 PM",
-    closeTime: "10:30 PM",
-    gst: "27ABCDE1234F1Z6",
-    fssai: "12345678901235",
-  },
-];
-
 const emptyOutlet = {
   name: "",
   address: "",

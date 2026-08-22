@@ -5,12 +5,245 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
+import {
+  Utensils,
+  Sparkles,
+  ShieldCheck,
+  Building,
+  Mail,
+  Lock,
+  Phone,
+  ArrowRight,
+  CheckCircle2,
+} from "lucide-react";
 
 export default function SignupPage() {
-  const { signUp } = useAuth(); const router = useRouter();
-  const [form, setForm] = useState({ email: "", password: "", restaurant_name: "", restaurant_email: "", restaurant_phone: "" });
-  const [error, setError] = useState(""); const [message, setMessage] = useState(""); const [busy, setBusy] = useState(false);
-  const update = (field) => (event) => setForm({ ...form, [field]: event.target.value });
-  async function submit(event) { event.preventDefault(); setBusy(true); setError(""); setMessage(""); if (!supabase) { setError("Supabase is not configured. Check your .env.local file."); setBusy(false); return; } try { const data = await signUp(form.email, form.password, { restaurant_name: form.restaurant_name, restaurant_email: form.restaurant_email || null, restaurant_phone: form.restaurant_phone || null }); if (data.session) router.replace("/dashboard"); else setMessage("Check your inbox to confirm your email, then sign in to finish setup."); } catch (requestError) { setError(requestError.message || "Unable to create your workspace."); } finally { setBusy(false); } }
-  return <main className="min-h-screen grid lg:grid-cols-2 bg-surface"><section className="grid place-items-center p-6 sm:p-12 order-2 lg:order-1"><div className="w-full max-w-md"><Link href="/" className="font-display font-extrabold text-lg text-ink">Rasoi<span className="text-accent">Saathi</span></Link><p className="font-mono text-xs tracking-widest text-accent mt-16">OWNER ONBOARDING</p><h2 className="font-display text-4xl font-extrabold text-ink mt-4 tracking-tight">Create your workspace</h2><p className="text-muted mt-3">Your Supabase account becomes the owner of this restaurant workspace.</p>{error && <p className="mt-5 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">{error}</p>}{message && <p className="mt-5 rounded-lg bg-green-50 border border-green-200 p-3 text-sm text-green-700">{message}</p>}<form onSubmit={submit} className="grid gap-4 mt-8"><label className="grid gap-2 text-sm font-bold text-ink">Your email<input className="rounded-lg border border-border bg-surface-2 px-4 py-3" type="email" required value={form.email} onChange={update("email")} /></label><label className="grid gap-2 text-sm font-bold text-ink">Password<input className="rounded-lg border border-border bg-surface-2 px-4 py-3" type="password" minLength="6" required value={form.password} onChange={update("password")} /></label><label className="grid gap-2 text-sm font-bold text-ink">Restaurant name<input className="rounded-lg border border-border bg-surface-2 px-4 py-3" required value={form.restaurant_name} onChange={update("restaurant_name")} /></label><label className="grid gap-2 text-sm font-bold text-ink">Restaurant email<input className="rounded-lg border border-border bg-surface-2 px-4 py-3" type="email" value={form.restaurant_email} onChange={update("restaurant_email")} /></label><label className="grid gap-2 text-sm font-bold text-ink">Phone<input className="rounded-lg border border-border bg-surface-2 px-4 py-3" value={form.restaurant_phone} onChange={update("restaurant_phone")} /></label><button disabled={busy} className="rounded-lg bg-gradient-to-r from-accent to-accent-2 py-3 text-white font-bold mt-2 disabled:opacity-60">{busy ? "Creating workspace..." : "Create workspace"}</button></form><p className="text-center text-sm text-muted mt-7">Already registered? <Link href="/login" className="font-bold text-accent">Sign in</Link></p></div></section><section className="hidden lg:flex flex-col justify-center p-12 xl:p-20 text-white bg-gradient-to-br from-[#a93220] via-accent to-accent-2 order-1 lg:order-2"><p className="font-mono text-xs tracking-widest text-white/70">START WITH THE WHOLE PICTURE</p><h1 className="font-display font-extrabold text-6xl leading-none tracking-tight mt-5">A steadier service starts with visibility.</h1></section></main>;
+  const { signUp } = useAuth();
+  const router = useRouter();
+
+  const [form, setForm] = useState({
+    name: "",
+    email: "",
+    password: "",
+    restaurant_name: "",
+    restaurant_email: "",
+    restaurant_phone: "",
+    city: "Mumbai",
+  });
+
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const update = (field) => (event) =>
+    setForm({ ...form, [field]: event.target.value });
+
+  async function submit(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setMessage("");
+
+    if (!supabase) {
+      setError("Supabase is not configured. Check your .env.local file.");
+      setBusy(false);
+      return;
+    }
+
+    try {
+      const data = await signUp(form.email, form.password, {
+        restaurant_name: form.restaurant_name,
+        restaurant_email: form.restaurant_email || form.email,
+        restaurant_phone: form.restaurant_phone || null,
+        owner_name: form.name,
+      });
+
+      if (data.session) {
+        router.replace("/dashboard");
+      } else {
+        setMessage(
+          "Account created! Check your inbox to confirm your email, or sign in now."
+        );
+      }
+    } catch (requestError) {
+      setError(requestError.message || "Unable to create your workspace.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="min-h-screen grid lg:grid-cols-12 bg-surface">
+      {/* Left Form Section */}
+      <section className="lg:col-span-7 flex flex-col justify-center px-6 sm:px-12 py-10 order-2 lg:order-1 overflow-y-auto">
+        <div className="w-full max-w-xl mx-auto">
+          {/* Logo */}
+          <Link href="/" className="inline-flex items-center gap-2 mb-8">
+            <span className="font-display font-extrabold text-2xl text-ink tracking-tight">
+              Rasoi<span className="text-accent">Saathi</span>
+            </span>
+          </Link>
+
+          <div>
+            <span className="text-[11px] font-extrabold uppercase tracking-widest text-accent bg-accent/10 px-2.5 py-1 rounded-md">
+              Restaurant Onboarding
+            </span>
+            <h1 className="font-display text-3xl sm:text-4xl font-extrabold text-ink mt-3 tracking-tight">
+              Set up your kitchen workspace
+            </h1>
+            <p className="text-sm text-muted mt-2">
+              Create your restaurant account to unlock XGBoost inventory forecasting, real-time POS, and staff roles.
+            </p>
+          </div>
+
+          {error && (
+            <div className="mt-5 rounded-xl bg-rose-500/10 border border-rose-500/20 p-4 text-xs font-semibold text-rose-600 dark:text-rose-400">
+              {error}
+            </div>
+          )}
+
+          {message && (
+            <div className="mt-5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+              {message}
+            </div>
+          )}
+
+          <form onSubmit={submit} className="mt-6 space-y-4">
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-ink uppercase tracking-wider mb-1.5">
+                  Owner Full Name
+                </label>
+                <input
+                  className="w-full rounded-xl border border-border bg-surface-2 px-3.5 py-2.5 text-sm text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent transition"
+                  placeholder="e.g. Sambodhi Bhowal"
+                  required
+                  value={form.name}
+                  onChange={update("name")}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-ink uppercase tracking-wider mb-1.5">
+                  Login Email
+                </label>
+                <input
+                  className="w-full rounded-xl border border-border bg-surface-2 px-3.5 py-2.5 text-sm text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent transition"
+                  type="email"
+                  placeholder="owner@myrestaurant.com"
+                  required
+                  value={form.email}
+                  onChange={update("email")}
+                />
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-bold text-ink uppercase tracking-wider mb-1.5">
+                  Restaurant / Brand Name
+                </label>
+                <input
+                  className="w-full rounded-xl border border-border bg-surface-2 px-3.5 py-2.5 text-sm text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent transition"
+                  placeholder="e.g. Saffron Junction"
+                  required
+                  value={form.restaurant_name}
+                  onChange={update("restaurant_name")}
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-ink uppercase tracking-wider mb-1.5">
+                  Phone Number
+                </label>
+                <input
+                  className="w-full rounded-xl border border-border bg-surface-2 px-3.5 py-2.5 text-sm text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent transition"
+                  placeholder="+91 98765 43210"
+                  value={form.restaurant_phone}
+                  onChange={update("restaurant_phone")}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-ink uppercase tracking-wider mb-1.5">
+                Password
+              </label>
+              <input
+                className="w-full rounded-xl border border-border bg-surface-2 px-3.5 py-2.5 text-sm text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent transition"
+                type="password"
+                minLength={6}
+                placeholder="At least 6 characters"
+                required
+                value={form.password}
+                onChange={update("password")}
+              />
+            </div>
+
+            <button
+              disabled={busy}
+              type="submit"
+              className="w-full rounded-xl bg-gradient-to-r from-orange-500 to-amber-400 hover:from-orange-600 hover:to-amber-500 py-3 text-slate-950 font-extrabold text-sm shadow-md transition disabled:opacity-60 flex items-center justify-center gap-2 mt-4"
+            >
+              <span>{busy ? "Setting up workspace..." : "Create Restaurant Workspace"}</span>
+              <ArrowRight size={16} />
+            </button>
+          </form>
+
+          <p className="text-center text-xs text-muted mt-6">
+            Already have a workspace?{" "}
+            <Link href="/login" className="font-bold text-accent hover:underline">
+              Sign in
+            </Link>
+          </p>
+        </div>
+      </section>
+
+      {/* Right Feature Showcase Banner */}
+      <section className="hidden lg:col-span-5 lg:flex flex-col justify-between p-12 bg-gradient-to-br from-slate-950 via-slate-900 to-stone-900 text-white order-1 lg:order-2 border-l border-border relative overflow-hidden">
+        <div className="relative z-10">
+          <div className="w-10 h-10 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-bold mb-6">
+            <Sparkles size={22} />
+          </div>
+
+          <p className="font-mono text-xs tracking-widest text-amber-400 uppercase font-bold">
+            All-in-One Restaurant OS
+          </p>
+          <h2 className="font-display font-extrabold text-3xl xl:text-4xl text-white mt-3 leading-snug">
+            Built for modern Indian kitchens & multi-branch dining.
+          </h2>
+
+          <div className="space-y-4 mt-8">
+            {[
+              {
+                title: "Role-Based Staff Access",
+                desc: "Owner dashboard, Kitchen chef KDS screen, and Waiter floor ordering terminal.",
+              },
+              {
+                title: "XGBoost ML Inventory Forecasting",
+                desc: "Predict tomorrow's ingredient burn rate and get prioritized restock checklists.",
+              },
+              {
+                title: "Omnichannel Order Sync",
+                desc: "Dine-in QR, WhatsApp chatbot, Swiggy, and Zomato tickets in one unified stream.",
+              },
+            ].map((f) => (
+              <div key={f.title} className="flex items-start gap-3 bg-white/5 border border-white/10 p-3.5 rounded-xl">
+                <CheckCircle2 size={18} className="text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="text-xs font-bold text-white">{f.title}</h4>
+                  <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">{f.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="relative z-10 pt-8 border-t border-white/10 flex items-center justify-between text-xs text-slate-400">
+          <span>RasoiSaathi v2.4</span>
+          <span>PostgreSQL + Supabase Cloud</span>
+        </div>
+      </section>
+    </main>
+  );
 }
