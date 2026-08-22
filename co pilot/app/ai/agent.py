@@ -1,6 +1,7 @@
 import os
 
 from dotenv import load_dotenv
+
 from google import genai
 from google.genai import types
 
@@ -12,9 +13,9 @@ from app.ai.tools import (
 )
 
 
-# ==========================================
-# LOAD ENVIRONMENT VARIABLES
-# ==========================================
+# =========================================================
+# ENVIRONMENT
+# =========================================================
 
 load_dotenv()
 
@@ -26,18 +27,14 @@ if not api_key:
     )
 
 
-# ==========================================
-# GEMINI CLIENT
-# ==========================================
-
 client = genai.Client(
     api_key=api_key
 )
 
 
-# ==========================================
+# =========================================================
 # SYSTEM PROMPT
-# ==========================================
+# =========================================================
 
 SYSTEM_PROMPT = """
 You are an AI business assistant for a restaurant manager.
@@ -48,74 +45,117 @@ You answer questions about:
 - revenue
 - costs
 - profit
+- profit margin
 - pricing
 - price changes
-- break-even points
+- break-even
+- business decisions
 
-Rules:
 
-1. Never invent restaurant numbers.
+MULTILINGUAL RULES:
+
+1. Detect the language used by the manager.
+
+2. Answer in the SAME language as the manager.
+
+3. Support:
+   - English
+   - Hindi
+   - Marathi
+   - Hinglish
+   - other commonly used languages.
+
+4. Keep restaurant product names in their
+   original database language when appropriate.
+
+
+DATA RULES:
+
+1. NEVER invent restaurant numbers.
 
 2. Whenever restaurant data is required,
-   use the appropriate tool.
+   ALWAYS use the appropriate database tool.
 
 3. Use get_product_sales for sales questions.
 
-4. Use get_product_profit for profit,
-   revenue, cost or margin questions.
+4. Use get_product_profit for:
+   - profit
+   - revenue
+   - cost
+   - profit margin
 
-5. Use simulate_price_change for price
-   what-if questions.
+5. Use simulate_price_change for:
+   - price increase
+   - price decrease
+   - price what-if questions
 
-6. Use calculate_break_even when the
-   manager asks how much sales can fall
+6. Use calculate_break_even when the manager asks:
+   - how many sales can fall
+   - how many units can be lost
+   - maximum quantity loss
    after a price change.
 
 7. Clearly state assumptions.
 
-8. Explain results in simple business
-   language.
+8. Explain results in simple business language.
 
 9. Use Indian Rupees (₹).
 
 10. If a product does not exist,
-    clearly say so.
+    clearly say that the product was not found.
 
 11. Never make up missing data.
+
+12. Show important financial numbers clearly.
+
+13. If the user asks a question that does not
+    require restaurant data, answer normally.
+
+14. Do not expose internal tool names,
+    database details, or implementation details
+    to the manager unless explicitly asked.
 """
 
 
-# ==========================================
-# GEMINI TOOLS
-# ==========================================
+# =========================================================
+# GEMINI TOOL DECLARATIONS
+# =========================================================
 
 tools = [
 
     types.Tool(
+
         function_declarations=[
 
-            # --------------------------------
-            # SALES
-            # --------------------------------
+            # =================================================
+            # SALES TOOL
+            # =================================================
 
             types.FunctionDeclaration(
+
                 name="get_product_sales",
 
                 description=(
-                    "Get total quantity sold "
-                    "for a restaurant product."
+                    "Get the total quantity sold for "
+                    "a restaurant product."
                 ),
 
                 parameters=types.Schema(
+
                     type=types.Type.OBJECT,
 
                     properties={
-                        "product_name": types.Schema(
-                            type=types.Type.STRING,
-                            description=(
-                                "Name of the restaurant product"
+
+                        "product_name":
+                            types.Schema(
+
+                                type=types.Type.STRING,
+
+                                description=(
+                                    "Name of the restaurant "
+                                    "product."
+                                )
                             )
-                        )
                     },
 
                     required=[
@@ -124,29 +164,38 @@ tools = [
                 )
             ),
 
-            # --------------------------------
-            # PROFIT
-            # --------------------------------
+
+            # =================================================
+            # PROFIT TOOL
+            # =================================================
 
             types.FunctionDeclaration(
+
                 name="get_product_profit",
 
                 description=(
                     "Get selling price, cost price, "
                     "quantity sold, revenue, total cost, "
-                    "profit and profit margin."
+                    "profit and profit margin for a "
+                    "restaurant product."
                 ),
 
                 parameters=types.Schema(
+
                     type=types.Type.OBJECT,
 
                     properties={
-                        "product_name": types.Schema(
-                            type=types.Type.STRING,
-                            description=(
-                                "Name of the restaurant product"
+
+                        "product_name":
+                            types.Schema(
+
+                                type=types.Type.STRING,
+
+                                description=(
+                                    "Name of the restaurant "
+                                    "product."
+                                )
                             )
-                        )
                     },
 
                     required=[
@@ -155,46 +204,63 @@ tools = [
                 )
             ),
 
-            # --------------------------------
-            # PRICE SIMULATION
-            # --------------------------------
+
+            # =================================================
+            # PRICE SIMULATION TOOL
+            # =================================================
 
             types.FunctionDeclaration(
+
                 name="simulate_price_change",
 
                 description=(
-                    "Calculate the effect of changing "
-                    "a product's price on expected profit."
+                    "Calculate the expected effect of "
+                    "changing a product's price on "
+                    "quantity and profit."
                 ),
 
                 parameters=types.Schema(
+
                     type=types.Type.OBJECT,
 
                     properties={
 
-                        "product_name": types.Schema(
-                            type=types.Type.STRING,
-                            description=(
-                                "Name of the restaurant product"
-                            )
-                        ),
+                        "product_name":
+                            types.Schema(
 
-                        "price_change": types.Schema(
-                            type=types.Type.NUMBER,
-                            description=(
-                                "Price change in rupees. "
-                                "20 means increase by ₹20. "
-                                "-10 means decrease by ₹10."
-                            )
-                        ),
+                                type=types.Type.STRING,
+
+                                description=(
+                                    "Name of the restaurant "
+                                    "product."
+                                )
+                            ),
+
+                        "price_change":
+                            types.Schema(
+
+                                type=types.Type.NUMBER,
+
+                                description=(
+                                    "Price change in Indian "
+                                    "Rupees. For example, "
+                                    "20 means increase price "
+                                    "by ₹20 and -20 means "
+                                    "decrease price by ₹20."
+                                )
+                            ),
 
                         "expected_quantity_change_percent":
                             types.Schema(
+
                                 type=types.Type.NUMBER,
+
                                 description=(
-                                    "Expected percentage change "
-                                    "in quantity sold. "
-                                    "-10 means sales decrease by 10%."
+                                    "Expected percentage "
+                                    "change in quantity sold. "
+                                    "For example, -10 means "
+                                    "sales are expected to "
+                                    "fall by 10 percent."
                                 )
                             )
                     },
@@ -206,37 +272,48 @@ tools = [
                 )
             ),
 
-            # --------------------------------
-            # BREAK EVEN
-            # --------------------------------
+
+            # =================================================
+            # BREAK EVEN TOOL
+            # =================================================
 
             types.FunctionDeclaration(
+
                 name="calculate_break_even",
 
                 description=(
                     "Calculate how many units can be lost "
                     "after a price change while maintaining "
-                    "the current total profit."
+                    "the current profit."
                 ),
 
                 parameters=types.Schema(
+
                     type=types.Type.OBJECT,
 
                     properties={
 
-                        "product_name": types.Schema(
-                            type=types.Type.STRING,
-                            description=(
-                                "Name of the restaurant product"
-                            )
-                        ),
+                        "product_name":
+                            types.Schema(
 
-                        "price_change": types.Schema(
-                            type=types.Type.NUMBER,
-                            description=(
-                                "Price change in rupees"
+                                type=types.Type.STRING,
+
+                                description=(
+                                    "Name of the restaurant "
+                                    "product."
+                                )
+                            ),
+
+                        "price_change":
+                            types.Schema(
+
+                                type=types.Type.NUMBER,
+
+                                description=(
+                                    "Price change in Indian "
+                                    "Rupees."
+                                )
                             )
-                        )
                     },
 
                     required=[
@@ -250,33 +327,59 @@ tools = [
 ]
 
 
-# ==========================================
+# =========================================================
 # TOOL EXECUTOR
-# ==========================================
+# =========================================================
 
 def execute_tool(
     db,
     function_name,
-    arguments
+    arguments,
+    restaurant_id=None,
+    branch_id=None
 ):
+
+    # =====================================================
+    # SALES
+    # =====================================================
 
     if function_name == "get_product_sales":
 
         return sales_tool(
+
             db,
-            arguments["product_name"]
+
+            arguments["product_name"],
+
+            restaurant_id,
+
+            branch_id
         )
 
 
-    elif function_name == "get_product_profit":
+    # =====================================================
+    # PROFIT
+    # =====================================================
+
+    if function_name == "get_product_profit":
 
         return profit_tool(
+
             db,
-            arguments["product_name"]
+
+            arguments["product_name"],
+
+            restaurant_id,
+
+            branch_id
         )
 
 
-    elif function_name == "simulate_price_change":
+    # =====================================================
+    # PRICE SIMULATION
+    # =====================================================
+
+    if function_name == "simulate_price_change":
 
         return price_simulation_tool(
 
@@ -289,11 +392,19 @@ def execute_tool(
             arguments.get(
                 "expected_quantity_change_percent",
                 0
-            )
+            ),
+
+            restaurant_id,
+
+            branch_id
         )
 
 
-    elif function_name == "calculate_break_even":
+    # =====================================================
+    # BREAK EVEN
+    # =====================================================
+
+    if function_name == "calculate_break_even":
 
         return break_even_tool(
 
@@ -301,30 +412,38 @@ def execute_tool(
 
             arguments["product_name"],
 
-            arguments["price_change"]
+            arguments["price_change"],
+
+            restaurant_id,
+
+            branch_id
         )
 
 
-    else:
+    # =====================================================
+    # UNKNOWN TOOL
+    # =====================================================
 
-        return {
-            "error":
-                f"Unknown tool: {function_name}"
-        }
+    return {
+        "error":
+            f"Unknown tool: {function_name}"
+    }
 
 
-# ==========================================
+# =========================================================
 # MAIN AGENT
-# ==========================================
+# =========================================================
 
 def run_agent(
     db,
-    user_message
+    user_message,
+    restaurant_id=None,
+    branch_id=None
 ):
 
-    # --------------------------------------
-    # Initial user message
-    # --------------------------------------
+    # =====================================================
+    # INITIAL USER MESSAGE
+    # =====================================================
 
     contents = [
 
@@ -337,22 +456,16 @@ def run_agent(
                 types.Part(
                     text=user_message
                 )
-
             ]
         )
-
     ]
 
 
-    # --------------------------------------
-    # Agent loop
-    # --------------------------------------
+    # =====================================================
+    # AGENT LOOP
+    # =====================================================
 
     while True:
-
-        # ----------------------------------
-        # Ask Gemini
-        # ----------------------------------
 
         response = client.models.generate_content(
 
@@ -370,9 +483,9 @@ def run_agent(
         )
 
 
-        # ----------------------------------
-        # Find function calls
-        # ----------------------------------
+        # =================================================
+        # FIND FUNCTION CALLS
+        # =================================================
 
         function_calls = []
 
@@ -386,50 +499,54 @@ def run_agent(
                 )
 
 
-        # ----------------------------------
-        # No function call
-        # Gemini has final answer
-        # ----------------------------------
+        # =================================================
+        # NO FUNCTION CALL
+        # GEMINI HAS FINISHED
+        # =================================================
 
         if not function_calls:
 
             return response.text
 
 
-        # ----------------------------------
-        # Add Gemini response to history
-        # ----------------------------------
+        # =================================================
+        # ADD GEMINI RESPONSE TO CONVERSATION
+        # =================================================
 
         contents.append(
             response.candidates[0].content
         )
 
 
-        # ----------------------------------
-        # Execute tools
-        # ----------------------------------
+        # =================================================
+        # EXECUTE FUNCTION CALLS
+        # =================================================
 
         tool_parts = []
 
 
         for function_call in function_calls:
 
-            # Get function name
             function_name = (
                 function_call.name
             )
 
 
-            # IMPORTANT:
-            # Get arguments BEFORE printing them
+            # ---------------------------------------------
+            # GET ARGUMENTS
+            # ---------------------------------------------
+
             arguments = dict(
                 function_call.args
             )
 
 
-            # Debug information
             print(
-                f"\nAI CALLED TOOL: "
+                "\n=============================="
+            )
+
+            print(
+                f"AI CALLED TOOL: "
                 f"{function_name}"
             )
 
@@ -439,27 +556,37 @@ def run_agent(
             )
 
 
-            # Execute the selected tool
+            # ---------------------------------------------
+            # EXECUTE DATABASE TOOL
+            # ---------------------------------------------
+
             result = execute_tool(
 
                 db,
 
                 function_name,
 
-                arguments
+                arguments,
+
+                restaurant_id,
+
+                branch_id
             )
 
 
-            # Print result for debugging
             print(
                 f"TOOL RESULT: "
                 f"{result}"
             )
 
+            print(
+                "=============================="
+            )
 
-            # --------------------------------
-            # Send tool result to Gemini
-            # --------------------------------
+
+            # ---------------------------------------------
+            # CREATE TOOL RESPONSE
+            # ---------------------------------------------
 
             tool_parts.append(
 
@@ -476,9 +603,9 @@ def run_agent(
             )
 
 
-        # ----------------------------------
-        # Add tool results to conversation
-        # ----------------------------------
+        # =================================================
+        # SEND TOOL RESULTS BACK TO GEMINI
+        # =================================================
 
         contents.append(
 
