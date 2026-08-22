@@ -17,7 +17,7 @@ const groups = [
     label: "Management",
     links: [
       { name: "Inventory", href: "/inventory", icon: "📦" },
-      { name: "AI Analytics", href: "/analytics", icon: "📊" },
+      { name: "Analytics", href: "/analytics", icon: "📊" },
     ],
   },
   {

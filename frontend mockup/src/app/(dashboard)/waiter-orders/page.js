@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Check, Minus, Plus, ReceiptText, Trash2 } from "lucide-react";
+import { Check, Minus, Plus, ReceiptText, Trash2, UtensilsCrossed } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest } from "@/services/api";
+import { getDishImage } from "@/lib/dishImages";
 
 export default function WaiterOrdersPage() {
   const { session } = useAuth();
@@ -103,14 +104,51 @@ export default function WaiterOrdersPage() {
               <option value="TAKEAWAY">Takeaway</option>
             </select>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            {menuItems.map((item) => (
-              <button key={item.id} onClick={() => addToCart(item)} className="text-left bg-surface border border-border rounded-xl p-4 hover:border-accent hover:bg-accent/5 transition-colors">
-                <p className="font-semibold text-ink text-sm">{item.name}</p>
-                <p className="text-accent font-bold mt-2">₹{Number(item.price).toLocaleString("en-IN")}</p>
-                <span className="flex items-center gap-1 text-xs text-muted mt-3"><Plus size={13} /> Add</span>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            {menuItems.map((item) => {
+              const imageUrl = getDishImage(item);
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => addToCart(item)}
+                  className="text-left bg-surface border border-border rounded-xl overflow-hidden hover:border-accent hover:shadow-md transition-all group flex flex-col justify-between"
+                >
+                  <div className="relative w-full h-28 bg-surface-2 overflow-hidden flex items-center justify-center">
+                    <img
+                      src={imageUrl}
+                      alt={item.name}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                    <span
+                      className={`absolute top-2 left-2 w-4 h-4 rounded-sm border-2 flex items-center justify-center ${
+                        item.food_type === "non-veg" ? "border-red-600 bg-white" : "border-green-600 bg-white"
+                      }`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          item.food_type === "non-veg" ? "bg-red-600" : "bg-green-600"
+                        }`}
+                      />
+                    </span>
+                  </div>
+
+                <div className="p-3 flex-1 flex flex-col justify-between">
+                  <div>
+                    <p className="font-semibold text-ink text-sm line-clamp-1">{item.name}</p>
+                    <p className="text-accent font-bold mt-1 text-sm">
+                      ₹{Number(item.price).toLocaleString("en-IN")}
+                    </p>
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-border/50 flex items-center justify-between text-xs text-muted group-hover:text-accent">
+                    <span className="font-medium">Add to order</span>
+                    <span className="w-5 h-5 rounded-full bg-accent/10 flex items-center justify-center group-hover:bg-accent group-hover:text-white transition-colors">
+                      <Plus size={12} />
+                    </span>
+                  </div>
+                </div>
               </button>
-            ))}
+            );
+          })}
           </div>
         </div>
 

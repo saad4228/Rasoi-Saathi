@@ -50,7 +50,7 @@ export default function AnalyticsPage() {
       {/* header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-extrabold" style={{ color: INK }}>AI Analytics</h1>
+          <h1 className="text-2xl font-extrabold" style={{ color: INK }}>Analytics</h1>
           <p className="text-sm text-gray-500 mt-1">Sales trends and profitability, in one view.</p>
         </div>
         <div className="flex gap-2 bg-gray-100 p-1 rounded-full">
@@ -139,17 +139,17 @@ export default function AnalyticsPage() {
           outerRadius={80}
           paddingAngle={4}
           cornerRadius={6}
-          label={({ value }) => `${value}%`}
+          label={({ value }) => `${Number(value || 0).toFixed(1)}%`}
           labelLine={false}
         >
           {analytics.cost_breakdown.map((c) => <Cell key={c.name} fill={c.color} stroke="none" />)}
         </Pie>
-        <Tooltip formatter={(v) => `${v}%`} />
+        <Tooltip formatter={(v) => `${Number(v || 0).toFixed(1)}%`} />
       </PieChart>
     </ResponsiveContainer>
     {/* center label */}
     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-      <span className="text-2xl font-extrabold">{Math.round(analytics.cost_breakdown[0]?.value || 0)}%</span>
+      <span className="text-2xl font-extrabold">{Number(analytics.cost_breakdown[0]?.value || 0).toFixed(1)}%</span>
       <span className="text-[10px] text-gray-400">largest cost</span>
     </div>
   </div>
@@ -162,12 +162,12 @@ export default function AnalyticsPage() {
             <span className="w-2 h-2 rounded-full" style={{ background: c.color }} />
             {c.name}
           </span>
-          <span className="font-semibold">{c.value}%</span>
+          <span className="font-semibold">{Number(c.value || 0).toFixed(1)}%</span>
         </div>
         <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
           <div
             className="h-full rounded-full"
-            style={{ width: `${c.value}%`, background: c.color }}
+            style={{ width: `${Math.min(100, Math.max(0, Number(c.value || 0)))}%`, background: c.color }}
           />
         </div>
       </div>
@@ -208,7 +208,7 @@ export default function AnalyticsPage() {
                   <td className="py-2.5">{d.orders}</td>
                   <td className="py-2.5">
                     <span className={`font-semibold ${d.margin >= 35 ? "text-green-600" : "text-orange-500"}`}>
-                      {d.margin}%
+                      {Number(d.margin || 0).toFixed(1)}%
                     </span>
                   </td>
                 </tr>

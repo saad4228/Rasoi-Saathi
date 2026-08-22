@@ -7,6 +7,7 @@ import AddDishModal from "@/components/dashboard/AddDishModal";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { apiRequest } from "@/services/api";
+import { getDishImage } from "@/lib/dishImages";
 
 const initialDishes = [
   {
@@ -178,13 +179,31 @@ export default function MenuPage() {
     )));
   }
 
+  async function toggleAvailability(id, currentAvailable) {
+    const nextState = !currentAvailable;
+    setDishes((prev) => prev.map((d) => (d.id === id ? { ...d, available: nextState, is_active: nextState } : d)));
+
+    try {
+      const updated = await apiRequest(`/api/menu-items/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ is_active: nextState }),
+      }, session);
+      setDishes((prev) => prev.map((dish) => (
+        dish.id === id ? { ...dish, ...updated, available: updated.is_active, is_active: updated.is_active, type: updated.food_type || dish.type, image: updated.image_url } : dish
+      )));
+    } catch (toggleError) {
+      setDishes((prev) => prev.map((d) => (d.id === id ? { ...d, available: currentAvailable, is_active: currentAvailable } : d)));
+      alert(toggleError.message || "Failed to update dish availability in database.");
+    }
+  }
+
   async function updateDish(id, values) {
     const updated = await apiRequest(`/api/menu-items/${id}`, {
       method: "PATCH",
       body: JSON.stringify(values),
     }, session);
     setDishes((prev) => prev.map((dish) => (
-      dish.id === id ? { ...dish, ...updated, type: updated.food_type || dish.type, image: updated.image_url } : dish
+      dish.id === id ? { ...dish, ...updated, available: updated.is_active, is_active: updated.is_active, type: updated.food_type || dish.type, image: updated.image_url } : dish
     )));
   }
 
@@ -249,7 +268,7 @@ export default function MenuPage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filteredDishes.map((dish) => (
-            <DishCard key={`${dish.id}-${dish.is_active}`} dish={dish} onDelete={deleteDish} onChangeImage={changeDishImage} onEdit={() => setEditingDish(dish)} />
+            <DishCard key={`${dish.id}-${dish.available}`} dish={dish} onDelete={deleteDish} onChangeImage={changeDishImage} onEdit={() => setEditingDish(dish)} onToggleAvailability={toggleAvailability} />
           ))}
         </div>
       )}
@@ -273,10 +292,20 @@ export default function MenuPage() {
   );
 }
 
-function DishCard({ dish, onDelete, onChangeImage, onEdit }) {
-  const [available, setAvailable] = useState(dish.available);
+function DishCard({ dish, onDelete, onChangeImage, onEdit, onToggleAvailability }) {
+  const available = dish.available ?? dish.is_active;
   const [showMenu, setShowMenu] = useState(false);
   const [imageError, setImageError] = useState("");
+  const [toggling, setToggling] = useState(false);
+
+  async function handleToggle() {
+    setToggling(true);
+    try {
+      await onToggleAvailability(dish.id, available);
+    } finally {
+      setToggling(false);
+    }
+  }
 
   async function handleImageChange(event) {
     const file = event.target.files?.[0];
@@ -299,14 +328,8 @@ function DishCard({ dish, onDelete, onChangeImage, onEdit }) {
       }`}
     >
       {/* Image */}
-      <div className="relative w-full h-32 bg-surface-2">
-        {dish.image ? (
-          <img src={dish.image} alt={dish.name} className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-muted">
-            <UtensilsCrossed size={28} strokeWidth={1.5} />
-          </div>
-        )}
+      <div className="relative w-full h-32 bg-surface-2 overflow-hidden">
+        <img src={getDishImage(dish)} alt={dish.name} className="w-full h-full object-cover" />
         <span
           className={`absolute top-2 left-2 w-4 h-4 rounded-sm border-2 flex items-center justify-center ${
             dish.type === "veg" ? "border-green-600" : "border-red-600"
@@ -374,10 +397,11 @@ function DishCard({ dish, onDelete, onChangeImage, onEdit }) {
 
           <div className="flex flex-col items-end gap-1">
             <button
-              onClick={() => setAvailable(!available)}
+              disabled={toggling}
+              onClick={handleToggle}
               className={`relative w-9 h-5 rounded-full transition-colors ${
                 available ? "bg-accent" : "bg-surface-2 border border-border"
-              }`}
+              } ${toggling ? "opacity-50 cursor-wait" : ""}`}
             >
               <span
                 className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${

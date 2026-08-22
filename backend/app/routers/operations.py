@@ -166,12 +166,31 @@ def create_menu_item(payload: MenuItemCreate, user: User = Depends(require_roles
 
 
 @router.patch("/menu-items/{item_id}", response_model=MenuItemResponse)
-def update_menu_item(item_id: UUID, payload: MenuItemUpdate, user: User = Depends(require_roles("owner")), db: Session = Depends(get_db)):
-    item = db.scalar(select(MenuItem).where(MenuItem.id == item_id, MenuItem.restaurant_id == user.restaurant_id))
+def update_menu_item(item_id: UUID, payload: MenuItemUpdate, user: User = Depends(require_roles("owner", "chef")), db: Session = Depends(get_db)):
+    item = db.scalar(
+        select(MenuItem)
+        .options(selectinload(MenuItem.ingredients).selectinload(MenuItemIngredient.inventory_item))
+        .where(MenuItem.id == item_id, MenuItem.restaurant_id == user.restaurant_id)
+    )
     if item is None: raise HTTPException(status_code=404, detail="Menu item not found")
     for key, value in payload.model_dump(exclude_unset=True).items(): setattr(item, key, value)
     db.commit(); db.refresh(item)
-    return item
+    return {
+        **item.__dict__,
+        "ingredients": [
+            {
+                "inventory_item_id": ingredient.inventory_item_id,
+                "name": ingredient.inventory_item.name,
+                "unit": ingredient.inventory_item.unit,
+                "quantity_per_unit": ingredient.quantity_per_unit,
+            }
+            for ingredient in item.ingredients
+        ],
+        "low_stock_ingredient_count": sum(
+            ingredient.inventory_item.current_stock <= ingredient.inventory_item.safety_stock_level
+            for ingredient in item.ingredients
+        ),
+    }
 
 
 @router.delete("/menu-items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -426,7 +445,12 @@ def analytics_summary(days: int = Query(default=7, ge=7, le=30), user: User = De
         for day, values in revenue_by_day.items()
     ]
     dishes = [
-        {"name": values["name"], "revenue": values["revenue"], "orders": values["orders"], "margin": round(float((values["revenue"] - values["food_cost"]) / values["revenue"] * 100), 1) if values["revenue"] else 0}
+        {
+            "name": values["name"],
+            "revenue": values["revenue"],
+            "orders": values["orders"],
+            "margin": round(float((values["revenue"] - values["food_cost"]) / values["revenue"] * 100), 1) if values["revenue"] else 0.0
+        }
         for values in dish_totals.values()
     ]
     return {
@@ -434,14 +458,14 @@ def analytics_summary(days: int = Query(default=7, ge=7, le=30), user: User = De
         "stats": {
             "total_revenue": total_revenue,
             "total_orders": len(orders),
-            "profit_margin": (profit / total_revenue * 100) if total_revenue else Decimal("0"),
-            "food_cost_percent": (food_cost / total_revenue * 100) if total_revenue else Decimal("0"),
+            "profit_margin": round(float(profit / total_revenue * 100), 1) if total_revenue else 0.0,
+            "food_cost_percent": round(float(food_cost / total_revenue * 100), 1) if total_revenue else 0.0,
         },
         "cost_breakdown": [
-            {"name": "Food Cost", "value": float(food_cost / cost_total * 100), "color": "#F2660D"},
-            {"name": "Platform Fees", "value": float(platform_fees / cost_total * 100), "color": "#F0A93A"},
-            {"name": "Wastage", "value": float(wastage / cost_total * 100), "color": "#C9500A"},
-            {"name": "Other Costs", "value": float(other_costs / cost_total * 100), "color": "#E7DFD1"},
+            {"name": "Food Cost", "value": round(float(food_cost / cost_total * 100), 1), "color": "#F2660D"},
+            {"name": "Platform Fees", "value": round(float(platform_fees / cost_total * 100), 1), "color": "#F0A93A"},
+            {"name": "Wastage", "value": round(float(wastage / cost_total * 100), 1), "color": "#C9500A"},
+            {"name": "Other Costs", "value": round(float(other_costs / cost_total * 100), 1), "color": "#E7DFD1"},
         ],
         "dishes": dishes,
     }
