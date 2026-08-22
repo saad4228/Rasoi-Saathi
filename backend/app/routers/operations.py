@@ -1,6 +1,9 @@
+import logging
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID, uuid4
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, func, select
@@ -502,3 +505,31 @@ def dashboard_summary(user: User = Depends(get_current_user), db: Session = Depe
         row = daily_by_date.get(series_day)
         revenue_series.append({"day": series_day, "revenue": row.revenue if row else Decimal("0"), "orders": row.orders if row else 0})
     return {"today_revenue": total, "today_orders": len(orders), "avg_order_value": total / len(orders) if orders else Decimal("0"), "low_stock_count": low_stock, "total_revenue": total, "revenue_series": revenue_series, "recent_orders": [{"id": str(o.id), "source": o.order_source, "status": o.status, "total": o.total_amount, "ordered_at": o.ordered_at} for o in recent], "insight": None}
+
+
+# ─── XGBoost Reorder Alerts ───────────────────────────────────────────────────
+
+@router.get("/inventory/reorder-alerts")
+def get_reorder_alerts(
+    branch_id: UUID = Query(...),
+    horizon_days: int = Query(default=45, ge=1, le=90),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Run the XGBoost forecaster and return prioritised reorder suggestions."""
+    branch_for_user(db, user, branch_id)
+    try:
+        from app.ml.forecaster import generate_reorder_alerts
+        alerts = generate_reorder_alerts(db, branch_id, user.restaurant_id, horizon_days=horizon_days)
+    except ImportError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Forecasting dependencies (xgboost, pandas) are not installed.",
+        )
+    except Exception as exc:
+        logger.exception("Forecaster error")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Forecaster error: {exc}",
+        ) from exc
+    return alerts
