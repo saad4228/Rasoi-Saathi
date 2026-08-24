@@ -60,21 +60,25 @@ export default function ProtectedDashboard({ children }) {
 
   if (!session) return null;
 
-  if (error || !applicationUser) {
-    return (
-      <div className="min-h-screen grid place-items-center bg-bg p-6 text-center">
-        <div>
-          <p className="text-accent font-mono text-xs tracking-widest uppercase">Profile Access</p>
-          <h1 className="font-display text-2xl font-extrabold text-ink mt-3">
-            Workspace profile unavailable
-          </h1>
-          <p className="text-muted mt-3">
-            Your Supabase account is authenticated, but no active Rasoi Sathi profile was found.
-          </p>
-        </div>
+  if ((error || !applicationUser) && pathname !== "/complete-setup") {
+  return (
+    <div className="min-h-screen grid place-items-center bg-bg p-6 text-center">
+      <div>
+        <p className="text-accent font-mono text-xs tracking-widest uppercase">Profile Access</p>
+        <h1 className="font-display text-2xl font-extrabold text-ink mt-3">
+          Workspace profile unavailable
+        </h1>
+        <p className="text-muted mt-3">
+          Your Supabase account is authenticated, but no active Rasoi Sathi profile was found.
+        </p>
       </div>
-    );
-  }
+    </div>
+  );
+}
+
+if ((error || !applicationUser) && pathname === "/complete-setup") {
+  return children;
+}
 
   return children;
 }

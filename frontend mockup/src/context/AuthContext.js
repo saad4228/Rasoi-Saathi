@@ -60,15 +60,38 @@ export function AuthProvider({ children }) {
     const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
     if (signInError) throw signInError;
     let profile = null;
-    try { profile = await loadProfile(data.session); } catch (profileError) {
-      if (profileError.status !== 401) throw profileError;
-      const pending = sessionStorage.getItem("pending_onboarding");
-      if (!pending) throw profileError;
-      await apiRequest("/api/auth/onboarding", { method: "POST", body: pending }, data.session);
-      sessionStorage.removeItem("pending_onboarding");
-      profile = await loadProfile(data.session);
+try {
+  profile = await loadProfile(data.session);
+} catch (profileError) {
+  if (profileError.status !== 401) throw profileError;
+
+  const pending = sessionStorage.getItem("pending_onboarding");
+  if (pending) {
+    await apiRequest("/api/auth/onboarding", { method: "POST", body: pending }, data.session);
+    sessionStorage.removeItem("pending_onboarding");
+    profile = await loadProfile(data.session);
+  } else {
+    // First check failed — retry a couple of times before assuming it's really missing,
+    // since it can briefly 401 right after login before the profile finishes loading.
+    let confirmed = false;
+    for (let attempt = 0; attempt < 3 && !confirmed; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      try {
+        profile = await loadProfile(data.session);
+        confirmed = true;
+      } catch (retryError) {
+        if (retryError.status !== 401) throw retryError;
+      }
     }
-    return { ...data, applicationUser: profile };
+
+    if (!confirmed) {
+      const needsOnboarding = new Error("Account exists but workspace setup was never completed.");
+      needsOnboarding.needsOnboarding = true;
+      throw needsOnboarding;
+    }
+  }
+}
+return { ...data, applicationUser: profile };
   }
 
   async function signUp(email, password, restaurant) {

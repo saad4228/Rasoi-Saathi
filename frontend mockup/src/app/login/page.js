@@ -26,7 +26,14 @@ export default function LoginPage() {
         router.replace("/dashboard");
       }
     }
-    catch (requestError) { setError(requestError.status === 401 ? "Your account is not active in Rasoi Sathi yet." : requestError.message || "Unable to sign in."); }
+    catch (requestError) {
+  if (requestError.needsOnboarding) {
+    sessionStorage.setItem("pending_login_email", form.email);
+    router.replace("/complete-setup");
+    return;
+  }
+  setError(requestError.message || "Unable to sign in.");
+}
     finally { setBusy(false); }
   }
   return <main className="min-h-screen grid lg:grid-cols-2 bg-surface">
