@@ -6,38 +6,35 @@ import { useOutlets } from "@/context/OutletContext";
 
 export default function OutletSwitcher() {
   const [isOpen, setIsOpen] = useState(false);
-  const { outlets, activeOutletId, setActiveOutletId, activeOutlet } = useOutlets();
+  const { outlets, outletsLoaded, activeOutletId, setActiveOutletId, activeOutlet, restaurantName } = useOutlets();
 
   function handleSelect(id) {
     setActiveOutletId(id);
     setIsOpen(false);
   }
 
-  const displayName = activeOutlet?.name || "My Restaurant";
-  const displayArea = activeOutlet?.area ? ` — ${activeOutlet.area}` : "";
+  const area = activeOutlet?.address || (outletsLoaded ? "No outlet yet" : "Loading outlets...");
 
   return (
     <div className="relative">
       <button
         onClick={() => setIsOpen((prev) => !prev)}
-        className="flex items-center gap-2 text-muted hover:text-ink transition py-1.5 px-2 rounded-lg hover:bg-surface-2"
+        className="flex items-center gap-2 min-w-0 text-muted hover:text-ink transition py-1.5 px-2 rounded-lg hover:bg-surface-2"
+        aria-label="Switch outlet"
       >
-        <span className="font-semibold text-ink text-sm">
-          {displayName}
-          <span className="text-muted font-normal">{displayArea}</span>
+        <span className="font-semibold text-ink text-sm truncate block max-w-[42vw] sm:max-w-xs md:max-w-md">
+          {restaurantName || "My Restaurant"}
+          <span className="text-muted font-normal"> — {area}</span>
         </span>
         {outlets.length > 1 && (
-          <ChevronDown
-            size={15}
-            className={`transition-transform duration-150 ${isOpen ? "rotate-180" : ""}`}
-          />
+          <ChevronDown size={15} className={`transition-transform duration-150 ${isOpen ? "rotate-180" : ""}`} />
         )}
       </button>
 
       {isOpen && outlets.length > 1 && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
-          <div className="absolute left-0 mt-2 w-64 bg-surface border border-border rounded-xl shadow-lg z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+          <div className="absolute left-0 mt-2 w-72 bg-surface border border-border rounded-xl shadow-lg z-50 overflow-hidden">
             {outlets.map((outlet) => (
               <button
                 key={outlet.id}
@@ -48,12 +45,10 @@ export default function OutletSwitcher() {
                   <Store size={14} className="text-amber-500" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-ink truncate">{outlet.name}</p>
-                  <p className="text-xs text-muted truncate">{outlet.area}</p>
+                  <p className="text-sm font-semibold text-ink truncate">{outlet.address || "Unnamed outlet"}</p>
+                  <p className="text-xs text-muted truncate">{outlet.is_active ? "Active" : "Inactive"}</p>
                 </div>
-                {outlet.id === activeOutletId && (
-                  <Check size={16} className="text-amber-500 shrink-0" />
-                )}
+                {outlet.id === activeOutletId && <Check size={16} className="text-amber-500 shrink-0" />}
               </button>
             ))}
           </div>

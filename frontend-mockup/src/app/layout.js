@@ -1,6 +1,7 @@
 import { Plus_Jakarta_Sans, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import AuthProviderShell from "@/components/AuthProvider";
+import { themeBootScript } from "@/lib/themeScript";
 
 const jakarta = Plus_Jakarta_Sans({
   subsets: ["latin"],
@@ -24,8 +25,14 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" data-theme="light" className={`${jakarta.variable} ${inter.variable} ${jetbrains.variable}`}>
-      <body className="font-body"><AuthProviderShell>{children}</AuthProviderShell></body>
+    // The boot script may switch data-theme before React hydrates.
+    <html lang="en" data-theme="light" suppressHydrationWarning className={`${jakarta.variable} ${inter.variable} ${jetbrains.variable}`}>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
+      </head>
+      <body className="font-body">
+        <AuthProviderShell>{children}</AuthProviderShell>
+      </body>
     </html>
   );
 }

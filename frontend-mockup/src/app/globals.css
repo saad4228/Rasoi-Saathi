@@ -1,10 +1,15 @@
 @import "tailwindcss";
 
+/* `dark:` utilities follow the app's theme toggle (data-theme on <html>),
+   not the operating system's colour-scheme setting. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
 :root {
   --bg: #ffffff;
   --surface: #ffffff;
   --surface-2: #f6f7fb;
   --border: rgba(20, 25, 40, 0.08);
+  --border-strong: rgba(20, 25, 40, 0.2);
   --text: #151a24;
   --text-muted: #5c6070;
   --accent: #e6522b;
@@ -16,6 +21,7 @@
   --surface: #1a1d26;
   --surface-2: #20232e;
   --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.22);
   --text: #f3f4f7;
   --text-muted: #a6aab8;
   --accent: #ff6a3d;
@@ -27,6 +33,7 @@
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-ink: var(--text);
   --color-muted: var(--text-muted);
   --color-accent: var(--accent);

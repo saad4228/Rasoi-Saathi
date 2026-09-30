@@ -1,7 +1,15 @@
+import Link from "next/link";
 import Image from "next/image";
 
-const productLinks = ["Features", "AI Copilot", "Pricing"];
-const companyLinks = ["About Us", "Contact", "Privacy Policy", "Terms of Service"];
+const productLinks = [
+  ["Features", "/#features"],
+  ["AI Copilot", "/#ai-copilot"],
+  ["Pricing", "/#pricing"],
+];
+const accountLinks = [
+  ["Sign in", "/login"],
+  ["Create a workspace", "/signup"],
+];
 
 export default function Footer() {
   return (
@@ -22,17 +30,17 @@ export default function Footer() {
         <div>
           <p className="text-xs font-bold text-muted mb-4">PRODUCT</p>
           <div className="space-y-3">
-            {productLinks.map((l) => (
-              <a key={l} href="#" className="block text-sm text-ink hover:text-accent">{l}</a>
+            {productLinks.map(([label, href]) => (
+              <a key={label} href={href} className="block text-sm text-ink hover:text-accent">{label}</a>
             ))}
           </div>
         </div>
 
         <div>
-          <p className="text-xs font-bold text-muted mb-4">COMPANY</p>
+          <p className="text-xs font-bold text-muted mb-4">ACCOUNT</p>
           <div className="space-y-3">
-            {companyLinks.map((l) => (
-              <a key={l} href="#" className="block text-sm text-ink hover:text-accent">{l}</a>
+            {accountLinks.map(([label, href]) => (
+              <Link key={label} href={href} className="block text-sm text-ink hover:text-accent">{label}</Link>
             ))}
           </div>
         </div>

@@ -27,7 +27,7 @@ export default function Testimonials() {
           <Reveal key={r.name} delay={i * 100}>
             <div className="rounded-2xl border border-border bg-surface-2 p-6 h-full">
               <p className="text-accent-2 mb-4">★★★★★</p>
-              <p className="text-sm text-ink mb-6">"{r.text}"</p>
+              <p className="text-sm text-ink mb-6">&ldquo;{r.text}&rdquo;</p>
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 rounded-full bg-gradient-to-r from-accent to-accent-2 text-white text-xs font-bold flex items-center justify-center">
                   {r.initials}

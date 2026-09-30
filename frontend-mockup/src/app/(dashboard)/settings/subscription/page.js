@@ -1,15 +1,22 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { apiRequest } from "@/services/api";
 import {
   MessageCircle, Store, Package, Sparkles, Building2, Check, TrendingDown,
-  Zap, ShieldCheck, CreditCard, XCircle, Star, ChevronDown, Flame,
+  Zap, ShieldCheck, CreditCard, XCircle, ChevronDown, Flame, Info,
   IndianRupee, ArrowRight,
 } from "lucide-react";
 
 /* ---------------- config: edit prices/copy here only ---------------- */
 
 const YEARLY_FREE = 2; // pay 10 months, get 12
+
+// Page ids <-> backend module codes (restaurant_modules.code).
+const MODULE_CODES = { whatsapp: "WHATSAPP", aggregators: "AGGREGATORS", inventory: "INVENTORY", copilot: "AI_COPILOT", multibranch: "MULTI_BRANCH" };
+const idsFromSubscriptions = (subscriptions) =>
+  Object.keys(MODULE_CODES).filter((id) => subscriptions.some((s) => s.status === "ACTIVE" && s.module_code === MODULE_CODES[id]));
+const sameSelection = (a, b) => a.length === b.length && a.every((id) => b.includes(id));
 
 const MODULES = [
   { id: "whatsapp",    name: "WhatsApp Ordering",    desc: "Take orders directly through WhatsApp chat.", price: 399, icon: MessageCircle, color: "text-green-600",  bg: "bg-green-500/10",  features: ["Auto-reply menu & cart", "Order confirmations", "Zero commission"] },
@@ -29,7 +36,7 @@ const FAQS = [
   ["Can I add or remove modules later?", "Yes. Toggle any module on or off anytime. Billing adjusts from your next cycle — no lock-in, no cancellation fee."],
   ["How does the bundle discount work?", "Any 3 modules gets you 10% off your whole bill. All 5 gets you 20% off. Applied automatically, forever."],
   ["Is there a free plan?", "Yes — the Free Tier includes basic order taking and a daily sales summary. Modules add automation on top."],
-  ["Do you provide GST invoices?", "Every payment generates a GST-compliant invoice, downloadable from Billing instantly."],
+  ["Do you provide GST invoices?", "GST invoices arrive with online billing. Until billing is connected, saving your plan only records the modules you use — nothing is charged."],
 ];
 
 /* ---------------------------- helpers ------------------------------ */
@@ -155,9 +162,9 @@ function DiscountProgress({ p }) {
   );
 }
 
-function StickyBar({ p, cycle }) {
+function StickyBar({ p, cycle, dirty, saving, onSave, status }) {
   return (
-    <div className="fixed bottom-0 left-0 right-0 md:left-[280px] z-20 border-t border-border bg-surface/95 backdrop-blur px-6 md:px-8 py-4">
+    <div className="fixed bottom-0 left-0 right-0 md:left-60 z-20 border-t border-border bg-surface/95 backdrop-blur px-6 md:px-8 py-4">
       <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
           <div className="mb-1.5 flex flex-wrap gap-1.5">
@@ -191,16 +198,19 @@ function StickyBar({ p, cycle }) {
 
         <div className="flex flex-col gap-1.5">
           <button
-            disabled={p.count === 0}
+            onClick={onSave}
+            disabled={!dirty || saving}
             className={`px-7 py-3 rounded-xl font-medium transition ${
-              p.count === 0
+              !dirty || saving
                 ? "cursor-not-allowed bg-surface-2 text-muted"
                 : `${GRAD} text-white shadow-lg shadow-orange-500/20 hover:opacity-90 active:scale-[0.98]`
             }`}
           >
-            {p.count === 0 ? "Select a module" : `Update Subscription · ${inr(p.billed)}`}
+            {saving ? "Saving..." : dirty ? `Save plan · ${inr(p.billed)}${cycle === "yearly" ? "/yr" : "/mo"}` : "Plan saved"}
           </button>
-          <p className="text-center text-[11px] text-muted">Secure payment · Cancel anytime</p>
+          <p className={`text-center text-[11px] ${status?.type === "error" ? "text-red-500" : "text-muted"}`}>
+            {status?.text || "Online payment isn't connected yet — nothing is charged."}
+          </p>
         </div>
       </div>
     </div>
@@ -210,13 +220,55 @@ function StickyBar({ p, cycle }) {
 /* ------------------------------ page ------------------------------- */
 
 export default function SubscriptionPage() {
-  const [selectedIds, setSelectedIds] = useState(["whatsapp", "inventory"]);
+  const [plan, setPlan] = useState({ loaded: false, activeIds: [] });
+  const [draft, setDraft] = useState(null); // null = showing the saved plan
   const [cycle, setCycle] = useState("monthly");
   const [openFaq, setOpenFaq] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest("/api/subscriptions")
+      .then((subscriptions) => {
+        if (!cancelled) setPlan({ loaded: true, activeIds: idsFromSubscriptions(subscriptions) });
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setPlan({ loaded: true, activeIds: [] });
+          setStatus({ type: "error", text: error.message || "Couldn't load your current plan." });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const selectedIds = draft ?? plan.activeIds;
+  const setSelectedIds = (next) => setDraft(typeof next === "function" ? next(selectedIds) : next);
+  const dirty = plan.loaded && !sameSelection(selectedIds, plan.activeIds);
   const p = usePricing(selectedIds, cycle);
 
   const toggle = (id) =>
     setSelectedIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+
+  async function savePlan() {
+    setSaving(true);
+    setStatus(null);
+    try {
+      const subscriptions = await apiRequest("/api/subscriptions", {
+        method: "PUT",
+        body: JSON.stringify({ module_codes: selectedIds.map((id) => MODULE_CODES[id]) }),
+      });
+      setPlan({ loaded: true, activeIds: idsFromSubscriptions(subscriptions) });
+      setDraft(null);
+      setStatus({ type: "success", text: "Plan saved. Online payment isn't connected yet, so nothing was charged." });
+    } catch (error) {
+      setStatus({ type: "error", text: error.message || "Couldn't save your plan." });
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const activeBundle = useMemo(() => {
     const key = [...selectedIds].sort().join();
@@ -262,7 +314,7 @@ export default function SubscriptionPage() {
           </div>
 
           <div className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted">
-            <span className="inline-flex items-center gap-1.5"><ShieldCheck size={14} className="text-green-600" /> 2,400+ restaurants onboard</span>
+            <span className="inline-flex items-center gap-1.5"><ShieldCheck size={14} className="text-green-600" /> {plan.loaded ? `Current plan: ${plan.activeIds.length ? plan.activeIds.map((id) => MODULES.find((m) => m.id === id).name).join(", ") : "Free Tier"}` : "Loading your plan..."}</span>
             <span className="inline-flex items-center gap-1.5"><XCircle size={14} className="text-accent" /> Cancel anytime</span>
             <span className="inline-flex items-center gap-1.5"><CreditCard size={14} className="text-blue-500" /> UPI, cards & GST invoices</span>
           </div>
@@ -347,15 +399,13 @@ export default function SubscriptionPage() {
         </div>
 
         <div className="rounded-2xl border border-border bg-surface p-5">
-          <div className="flex gap-0.5">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Star key={i} size={14} className="fill-amber-400 text-amber-400" />
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="rounded-xl bg-blue-500/10 p-2"><Info size={18} className="text-blue-500" /></div>
+            <p className="font-semibold text-ink">How billing works today</p>
           </div>
-          <p className="mt-3 text-sm text-ink">
-            &ldquo;We cut stock wastage by nearly a third in two months. The Swiggy–Zomato sync alone saved us a full-time person.&rdquo;
+          <p className="mt-2 text-sm text-muted">
+            Online payment isn&apos;t connected yet. Saving your plan records which modules your restaurant uses; nothing is charged.
           </p>
-          <p className="mt-2 text-xs text-muted">Owner, Annapurna Family Restaurant · Lucknow</p>
         </div>
       </div>
 
@@ -379,7 +429,7 @@ export default function SubscriptionPage() {
       {/* Safety spacer: keeps the last FAQ clear of the fixed bar on every screen */}
       <div className="h-24" />
 
-      <StickyBar p={p} cycle={cycle} />
+      <StickyBar p={p} cycle={cycle} dirty={dirty} saving={saving} onSave={savePlan} status={status} />
     </div>
   );
 }

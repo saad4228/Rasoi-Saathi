@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import require_roles
 from app.config import get_settings
 from app.database import get_db
 from app.models.branch import Branch
@@ -25,18 +25,17 @@ def verified_branch(db: Session, restaurant_id: UUID, branch_id: UUID | None) ->
         select(Branch.id).where(
             Branch.id == branch_id,
             Branch.restaurant_id == restaurant_id,
-            Branch.is_active.is_(True),
         )
     )
     if result is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Active branch not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outlet not found")
     return result
 
 
 @router.post("/chat", response_model=CopilotChatResponse)
 def chat(
     payload: CopilotChatRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_roles("owner")),
     db: Session = Depends(get_db),
 ) -> CopilotChatResponse:
     branch_id = verified_branch(db, user.restaurant_id, payload.branch_id)
@@ -44,7 +43,7 @@ def chat(
     service = CopilotService(db=db, restaurant_id=user.restaurant_id, branch_id=branch_id)
     copilot = GeminiCopilot(service=service, api_key=settings.gemini_api_key, model=settings.gemini_model)
     try:
-        answer = copilot.answer(payload.message)
+        answer = copilot.answer(payload.message, [(turn.role, turn.text) for turn in payload.history])
     except CopilotUnavailableError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     except Exception as exc:

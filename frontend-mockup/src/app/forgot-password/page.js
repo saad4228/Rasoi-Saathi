@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { describeAuthError, supabase } from "@/lib/supabase";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -19,8 +19,10 @@ export default function ForgotPasswordPage() {
       setBusy(false);
       return;
     }
-    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email);
-    if (resetError) setError("We could not send that reset email. Please try again.");
+    const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    if (resetError) setError(describeAuthError(resetError).message);
     else setMessage("If an account exists for that email, a reset link is on its way.");
     setBusy(false);
   }

@@ -4,13 +4,13 @@
 
 The `co pilot` folder supplied the initial prototype. Its useful design has been adapted into the main `backend` service so there will be one production Copilot service, not a separate SQLite application.
 
-The existing `frontend` folder has not been changed. Only `frontend mockup` has been connected to the new backend endpoint.
+`frontend-mockup` is connected to the backend endpoint.
 
 ## Changes completed so far
 
 ### 1. Copilot API added to the main backend
 
-- Added an authenticated endpoint: `POST /api/copilot/chat`.
+- Added an authenticated, owner-only endpoint: `POST /api/copilot/chat`. It accepts recent chat turns (`history`) so follow-up questions keep context.
 - It uses the same Supabase JWT authentication as the rest of the backend.
 - The restaurant is always obtained from the logged-in application user. The browser cannot select another restaurant by sending a different ID.
 - An optional `branch_id` is accepted. The backend verifies that it is an active branch belonging to the user's restaurant before querying data.
@@ -42,14 +42,14 @@ The existing `frontend` folder has not been changed. Only `frontend mockup` has 
 - Dish performance: top dishes by completed-sales revenue.
 - Order-source performance: POS, WhatsApp, Swiggy, and Zomato comparison.
 - Low-stock ingredients.
-- Stored demand forecasts.
-- Reorder suggestions based on forecasts, recipe quantities, current stock, and safety stock.
+- Dish demand estimates from same-weekday averages of recent completed sales.
+- Reorder suggestions from the same forecasting engine as the Inventory page (`generate_reorder_alerts`).
 
-### 5. `frontend mockup` chat page connected
+### 5. `frontend-mockup` chat page connected
 
 - Removed the canned `getMockResponse()` responses.
 - The Copilot page now uses the existing authenticated API helper to call `/api/copilot/chat`.
-- The page loads the user's real branches, selects a branch by default, and lets the manager change it.
+- The page uses the outlet selected in the top bar.
 - The UI shows request errors instead of silently presenting invented results.
 
 ### 6. RAG policy document layer integrated ✅ NEW
@@ -74,28 +74,19 @@ The existing `frontend` folder has not been changed. Only `frontend mockup` has 
 
 - Ran `backend\venv\Scripts\pip install google-genai==2.17.0` — installed successfully with all required dependencies.
 
-### 8. Tests and checks completed
+### 8. Tests and checks
 
-- Added calculation tests for price simulations and break-even calculations.
-- Ran those calculation tests directly; they passed.
-- Ran Python static compilation (`py_compile`) for `retriever.py`, `services/copilot.py`, `routers/copilot.py` — all passed with zero errors.
-- The regular `pytest` suite could not run because pytest is not installed in the default runtime.
-- Full mockup lint/build validation is still pending.
+- `backend/tests` (run `pytest` in `backend/`) covers the Copilot calculations plus auth, staff, orders, stock deduction, reporting, WhatsApp and forecasting on an in-memory database.
+- `npm run lint` and `next build` pass for `frontend-mockup`.
 
 ## Important behaviour and limitations
 
-- The Copilot reports **gross profit**, not true net profit. The present database design does not include operating expenses such as rent, salaries, electricity, packaging, or marketing.
-- Branch-specific profit, price simulation, break-even, and reorder suggestions require a selected branch because recipe ingredient costs and inventory are branch-specific.
-- All figures come from completed orders only, matching the existing backend analytics approach.
-- Forecast and reorder answers require stored `demand_forecasts` data. If it has not been generated yet, the Copilot will say that data is unavailable rather than guessing.
-- The original `co pilot` folder has deliberately been left in place as the reference implementation until the integrated backend service is fully verified. It can be deleted afterward.
+- The Copilot reports **gross profit**, not net profit: there is no expenses table for rent, salaries, electricity, packaging or marketing.
+- Dish profit, price simulation, break-even and reorder suggestions need an outlet, because recipe costs and stock are outlet-specific.
+- All figures come from completed orders only, matching the dashboard and analytics.
 
 ## Remaining work
 
-1. **Add a valid `GEMINI_API_KEY` to `backend/.env`** — get a key from https://aistudio.google.com/app/apikey (keys start with `AIza`). The current key in `.env` appears to be in an incompatible format.
-2. Start the backend against the real PostgreSQL/Supabase database and exercise `/api/copilot/chat` with an authenticated user.
-3. Run the full backend test suite once its standard test dependencies are available.
-4. Complete the `frontend mockup` lint/build check once permission is available to run a clean `npm ci` install.
-5. Manually verify each insight with seeded or production-safe data, especially branch comparisons, recipe costs, forecast results, and reorder quantities.
-6. Decide whether to add an expenses table later. That would allow the Copilot to provide true net-profit and operating-cost insights.
-7. After the integrated version is accepted, remove the old `co pilot` folder.
+1. Add a valid `GEMINI_API_KEY` to `backend/.env` (from https://aistudio.google.com/app/apikey) and exercise `/api/copilot/chat` against real data.
+2. Decide whether to add an expenses table for net-profit insights.
+3. Remove the old `co pilot` prototype folder once the integrated version is accepted.

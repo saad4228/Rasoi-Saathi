@@ -15,7 +15,7 @@ export default function AICopilot() {
           Smart Technology for <span className="text-accent">Smarter Decisions</span>
         </h2>
         <p className="text-muted mb-8">
-          RasoiSaathi's Copilot never answers from memory — it calls real functions
+          RasoiSaathi&apos;s Copilot never answers from memory — it calls real functions
           against your real restaurant data, then reasons over the result.
         </p>
         <div className="space-y-5">
@@ -44,9 +44,9 @@ export default function AICopilot() {
             What happens if I raise Chicken Biryani price by ₹10?
           </div>
           <div className="bg-surface rounded-lg p-4 text-sm text-ink space-y-2">
-            <p className="text-muted">Based on your historical data, here's what we estimate:</p>
+            <p className="text-muted">Based on your historical data, here&apos;s what we estimate:</p>
             <p>1. Estimated <span className="text-accent font-semibold">6% drop</span> in Biryani orders (~120 fewer/month).</p>
-            <p>2. That's about <span className="text-accent font-semibold">₹6,000/month</span> lost from fewer orders.</p>
+            <p>2. That&apos;s about <span className="text-accent font-semibold">₹6,000/month</span> lost from fewer orders.</p>
             <p>3. Remaining ~1,880 orders each earn ₹10 more — about <span className="text-accent font-semibold">₹18,800/month</span> gained.</p>
             <p className="font-bold pt-2 border-t border-border">4. Net effect: <span className="text-green-500">+₹12,800/month.</span></p>
           </div>

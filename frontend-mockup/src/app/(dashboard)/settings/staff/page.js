@@ -3,11 +3,9 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest } from "@/services/api";
-import { supabase } from "@/lib/supabase";
+import { createIsolatedAuthClient, describeAuthError } from "@/lib/supabase";
 import {
-  Users,
   UserPlus,
-  ShieldCheck,
   ChefHat,
   UtensilsCrossed,
   Crown,
@@ -42,44 +40,49 @@ const roleConfig = {
   },
 };
 
+const PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+
+function generatePassword(length = 12) {
+  const bytes = crypto.getRandomValues(new Uint32Array(length));
+  return Array.from(bytes, (value) => PASSWORD_ALPHABET[value % PASSWORD_ALPHABET.length]).join("");
+}
+
+const emptyForm = { name: "", email: "", role: "waiter", password: "" };
+
 export default function StaffManagementPage() {
-  const { session, applicationUser } = useAuth();
-  const [staffList, setStaffList] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { applicationUser } = useAuth();
+  const [staff, setStaff] = useState({ loaded: false, list: [] });
   const [filter, setFilter] = useState("all");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
   const [feedback, setFeedback] = useState({ type: "", text: "" });
-
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    role: "waiter",
-    password: "Staff@" + Math.floor(1000 + Math.random() * 9000),
-  });
-
-  async function loadStaff() {
-    setLoading(true);
-    try {
-      const data = await apiRequest("/api/staff", {}, session);
-      setStaffList(data);
-    } catch (err) {
-      setFeedback({ type: "error", text: err.message || "Failed to load staff list." });
-    } finally {
-      setLoading(false);
-    }
-  }
+  const [form, setForm] = useState(emptyForm);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    if (session) loadStaff();
-  }, [session]);
+    let cancelled = false;
+    apiRequest("/api/staff")
+      .then((list) => {
+        if (!cancelled) setStaff({ loaded: true, list });
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setStaff((previous) => ({ ...previous, loaded: true }));
+          setFeedback({ type: "error", text: err.message || "Failed to load staff list." });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadKey]);
 
-  function generatePassword() {
-    const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-    let pass = "Staff@";
-    for (let i = 0; i < 4; i++) pass += chars.charAt(Math.floor(Math.random() * chars.length));
-    setForm((prev) => ({ ...prev, password: pass }));
+  const staffList = staff.list;
+  const loading = !staff.loaded;
+
+  function openModal() {
+    setForm({ ...emptyForm, password: generatePassword() });
+    setIsModalOpen(true);
   }
 
   async function handleCreateStaff(e) {
@@ -88,49 +91,36 @@ export default function StaffManagementPage() {
     setFeedback({ type: "", text: "" });
 
     try {
-      let createdAuthUserId = null;
+      if (form.password.length < 8) throw new Error("Use a password of at least 8 characters.");
+      const authClient = createIsolatedAuthClient();
+      if (!authClient) throw new Error("Supabase is not configured.");
 
-      // 1. If Supabase is active, register their auth credentials
-      if (supabase) {
-        const { data: authData, error: authError } = await supabase.auth.signUp({
-          email: form.email,
-          password: form.password,
-        });
-
-        if (authError && !authError.message.toLowerCase().includes("already registered")) {
-          throw authError;
+      // A separate, non-persisting client so creating the login doesn't sign the owner out.
+      const email = form.email.trim().toLowerCase();
+      const { data, error: authError } = await authClient.auth.signUp({ email, password: form.password });
+      if (authError) {
+        if (/already registered|already exists/i.test(authError.message)) {
+          throw new Error("This email already has a login. Use a different email for this staff member.");
         }
-        createdAuthUserId = authData?.user?.id || null;
+        throw describeAuthError(authError);
+      }
+      if (!data.user || (Array.isArray(data.user.identities) && data.user.identities.length === 0)) {
+        throw new Error("This email already has a login. Use a different email for this staff member.");
       }
 
-      // 2. Link staff member in backend database
-      await apiRequest(
-        "/api/staff",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            user_id: createdAuthUserId,
-            name: form.name,
-            email: form.email,
-            role: form.role,
-          }),
-        },
-        session
-      );
+      await apiRequest("/api/staff", {
+        method: "POST",
+        body: JSON.stringify({ user_id: data.user.id, name: form.name.trim(), email, role: form.role }),
+      });
 
+      const confirmNote = data.session ? "" : " They must confirm their email from the link Supabase sent before signing in.";
       setFeedback({
         type: "success",
-        text: `Staff member "${form.name}" created as ${form.role.toUpperCase()}. Password: ${form.password}`,
+        text: `${form.name} can sign in as ${form.role} with ${email} / ${form.password}. Share this password privately.${confirmNote}`,
       });
-
       setIsModalOpen(false);
-      setForm({
-        name: "",
-        email: "",
-        role: "waiter",
-        password: "Staff@" + Math.floor(1000 + Math.random() * 9000),
-      });
-      loadStaff();
+      setForm(emptyForm);
+      setReloadKey((key) => key + 1);
     } catch (err) {
       setFeedback({ type: "error", text: err.message || "Failed to create staff member." });
     } finally {
@@ -138,29 +128,26 @@ export default function StaffManagementPage() {
     }
   }
 
-  async function handleToggleStatus(staff) {
+  async function handleToggleStatus(member) {
     try {
-      const updated = await apiRequest(
-        `/api/staff/${staff.id}`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({ is_active: !staff.is_active }),
-        },
-        session
-      );
-      setStaffList((current) =>
-        current.map((item) => (item.id === staff.id ? { ...item, is_active: updated.is_active } : item))
-      );
+      const updated = await apiRequest(`/api/staff/${member.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ is_active: !member.is_active }),
+      });
+      setStaff((current) => ({
+        ...current,
+        list: current.list.map((item) => (item.id === member.id ? { ...item, is_active: updated.is_active } : item)),
+      }));
     } catch (err) {
       setFeedback({ type: "error", text: err.message || "Could not update status." });
     }
   }
 
   async function handleDelete(staffId) {
-    if (!window.confirm("Are you sure you want to remove this staff member?")) return;
+    if (!window.confirm("Remove this staff member? Their login will stop working in this workspace.")) return;
     try {
-      await apiRequest(`/api/staff/${staffId}`, { method: "DELETE" }, session);
-      setStaffList((current) => current.filter((item) => item.id !== staffId));
+      await apiRequest(`/api/staff/${staffId}`, { method: "DELETE" });
+      setStaff((current) => ({ ...current, list: current.list.filter((item) => item.id !== staffId) }));
       setFeedback({ type: "success", text: "Staff member removed." });
     } catch (err) {
       setFeedback({ type: "error", text: err.message || "Could not remove staff member." });
@@ -192,7 +179,7 @@ export default function StaffManagementPage() {
         </div>
 
         <button
-          onClick={() => setIsModalOpen(true)}
+          onClick={openModal}
           className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-orange-500 to-amber-400 hover:from-orange-600 hover:to-amber-500 text-slate-950 font-extrabold text-xs shadow-md transition"
         >
           <UserPlus size={16} />
@@ -409,11 +396,11 @@ export default function StaffManagementPage() {
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-xs font-bold text-ink uppercase tracking-wider">
-                    Temporary Password / PIN
+                    Temporary Password
                   </label>
                   <button
                     type="button"
-                    onClick={generatePassword}
+                    onClick={() => setForm((prev) => ({ ...prev, password: generatePassword() }))}
                     className="text-[11px] font-bold text-accent hover:underline flex items-center gap-1"
                   >
                     <KeyRound size={12} />

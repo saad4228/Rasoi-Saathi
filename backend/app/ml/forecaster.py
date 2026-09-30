@@ -1,18 +1,24 @@
 """
-XGBoost-based ingredient usage forecaster.
+Ingredient usage forecaster and reorder planner.
 
-Ported from the standalone `xgboost_based_inventory_prediction/` prototype
-into the main backend. Uses the production PostgreSQL database (via
-SQLAlchemy) instead of Excel/CSV files.
+Daily ingredient usage is rebuilt from completed orders and this branch's
+recipes, then projected forward:
 
-The trained model (model.json) and ingredient-category list
-(ingredient_categories.json) are loaded on demand and cached.
+* ``xgboost_calibrated`` - the bundled XGBoost model (trained on another
+  restaurant's data, see model.json) supplies the day-to-day *shape* of demand,
+  and the projection is rescaled so its average matches this branch's own
+  recent average usage. Uncalibrated, the model forecasts its training
+  restaurant's volumes rather than yours.
+* ``moving_average`` - recent average daily usage, used when the ingredient
+  name is not one of the model's 34 categories or the model is unavailable.
+* ``no_history`` - no usage recorded yet; only stock vs safety level is checked.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -20,13 +26,15 @@ from uuid import UUID
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.inventory_item import InventoryItem
+from app.models.menu_item import MenuItem
 from app.models.menu_item_ingredient import MenuItemIngredient
 from app.models.order import Order
 from app.models.order_item import OrderItem
+from app.services.reporting import day_start_utc, local_date, local_today
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +47,8 @@ _MODEL_PATH = _ML_DIR / "model.json"
 _CATEGORIES_PATH = _ML_DIR / "ingredient_categories.json"
 
 _model = None
+_model_error: str | None = None
+_model_lock = threading.Lock()
 _ingredient_ids: list[str] = []
 
 FEATURE_COLS = [
@@ -52,9 +62,17 @@ FEATURE_COLS = [
     "rolling_7_avg",
     "rolling_30_avg",
 ]
-FORECAST_DAYS = 45
+FORECAST_DAYS = 30
+LOOKBACK_DAYS = 90
+CALIBRATION_WINDOW_DAYS = 28
 PAR_LEVEL_DAYS_DEFAULT = 14
 SHELF_LIFE_SAFETY_MARGIN = 0.7
+
+METHOD_LABELS = {
+    "xgboost_calibrated": "XGBoost pattern, scaled to your recent usage",
+    "moving_average": "Average of your recent daily usage",
+    "no_history": "No usage recorded yet",
+}
 
 # Canonical mapping from human-readable names / aliases in DB to the 34 trained XGBoost categories
 INGREDIENT_NAME_TO_CATEGORY: dict[str, str] = {
@@ -132,6 +150,7 @@ INGREDIENT_NAME_TO_CATEGORY: dict[str, str] = {
     "ghee": "I_019",
     "mustard oil": "I_019",
     "refined oil": "I_019",
+    "sunflower oil": "I_019",
     "oil/ghee": "I_019",
     # I_020 Onion
     "onion": "I_020",
@@ -194,165 +213,176 @@ INGREDIENT_NAME_TO_CATEGORY: dict[str, str] = {
 }
 
 
-def _load_model():
-    """Lazy-load the XGBoost model and canonical categories."""
-    global _model, _ingredient_ids  # noqa: PLW0603
-    if _model is not None:
+def _load_model() -> None:
+    """Lazy-load the XGBoost model once; remember a failure instead of retrying every request."""
+    global _model, _model_error, _ingredient_ids  # noqa: PLW0603
+    if _model is not None or _model_error is not None:
         return
-    if not _MODEL_PATH.exists():
-        raise RuntimeError(f"XGBoost model file not found at {_MODEL_PATH}.")
-    from xgboost import XGBRegressor
+    with _model_lock:
+        if _model is not None or _model_error is not None:
+            return
+        try:
+            if not _MODEL_PATH.exists():
+                raise RuntimeError(f"XGBoost model file not found at {_MODEL_PATH}.")
+            from xgboost import XGBRegressor
 
-    _model = XGBRegressor()
-    _model.load_model(str(_MODEL_PATH))
-    if _CATEGORIES_PATH.exists():
-        with open(_CATEGORIES_PATH) as f:
-            _ingredient_ids = json.load(f)
-    else:
-        _ingredient_ids = [f"I_{i:03d}" for i in range(1, 35)]
-    logger.info("XGBoost model loaded successfully (%d ingredient categories)", len(_ingredient_ids))
+            model = XGBRegressor()
+            model.load_model(str(_MODEL_PATH))
+            if _CATEGORIES_PATH.exists():
+                with open(_CATEGORIES_PATH, encoding="utf-8") as f:
+                    _ingredient_ids = json.load(f)
+            else:
+                _ingredient_ids = [f"I_{i:03d}" for i in range(1, 35)]
+            _model = model
+            logger.info("XGBoost model loaded (%d ingredient categories)", len(_ingredient_ids))
+        except Exception as exc:  # noqa: BLE001 - forecasting still works with the moving-average method
+            _model_error = str(exc)
+            logger.warning("XGBoost model unavailable, using moving averages instead: %s", exc)
 
 
 def resolve_category(ingredient_name: str) -> str | None:
     """Resolve an ingredient name or alias to the model's categorical ID."""
-    clean = ingredient_name.strip().lower()
-    return INGREDIENT_NAME_TO_CATEGORY.get(clean)
+    return INGREDIENT_NAME_TO_CATEGORY.get(ingredient_name.strip().lower())
 
 
 # ──────────────────────────────────────────────
-# Step 1: Build daily ingredient usage from DB
+# Step 1: Daily ingredient usage from completed orders
 # ──────────────────────────────────────────────
 
 def _build_daily_usage(
     db: Session,
     branch_id: UUID,
     restaurant_id: UUID,
-    lookback_days: int = 90,
+    lookback_days: int = LOOKBACK_DAYS,
 ) -> pd.DataFrame:
     """
-    Query completed orders for the given branch over the last N days,
-    join with recipes (menu_item_ingredients), and compute daily
-    ingredient usage in kg/litres.
+    One row per (ingredient, calendar day) from the ingredient's first recorded
+    use through yesterday, in the business timezone. Days without sales are 0,
+    so averages and lags are over calendar days rather than sales days. Today is
+    excluded because it is still in progress.
     """
-    cutoff = date.today() - timedelta(days=lookback_days)
+    today = local_today()
+    start_day = today - timedelta(days=lookback_days)
 
     rows = db.execute(
         select(
-            func.date(Order.ordered_at).label("order_date"),
+            Order.ordered_at,
             MenuItemIngredient.inventory_item_id,
-            func.sum(OrderItem.quantity * MenuItemIngredient.quantity_per_unit).label("usage"),
+            OrderItem.quantity * MenuItemIngredient.quantity_per_unit,
         )
         .join(OrderItem, OrderItem.order_id == Order.id)
-        .join(
-            MenuItemIngredient,
-            MenuItemIngredient.menu_item_id == OrderItem.menu_item_id,
-        )
+        .join(MenuItemIngredient, MenuItemIngredient.menu_item_id == OrderItem.menu_item_id)
+        .join(InventoryItem, InventoryItem.id == MenuItemIngredient.inventory_item_id)
         .where(
             Order.branch_id == branch_id,
             Order.restaurant_id == restaurant_id,
             Order.status == "COMPLETED",
-            func.date(Order.ordered_at) >= cutoff,
+            Order.ordered_at >= day_start_utc(start_day),
+            Order.ordered_at < day_start_utc(today),
+            # Only this branch's recipe lines: a dish's other branches use other stock.
+            InventoryItem.branch_id == branch_id,
         )
-        .group_by(func.date(Order.ordered_at), MenuItemIngredient.inventory_item_id)
-        .order_by(func.date(Order.ordered_at))
     ).all()
 
     if not rows:
         return pd.DataFrame(columns=["Date", "inventory_item_id", "quantity_used"])
 
-    records = [
+    raw = pd.DataFrame(
         {
-            "Date": pd.Timestamp(r.order_date),
-            "inventory_item_id": str(r.inventory_item_id),
-            "quantity_used": float(r.usage),
+            "Date": [pd.Timestamp(local_date(ordered_at)) for ordered_at, _, _ in rows],
+            "inventory_item_id": [str(item_id) for _, item_id, _ in rows],
+            "quantity_used": [float(usage) for _, _, usage in rows],
         }
-        for r in rows
-    ]
-
-    return pd.DataFrame(records)
-
-
-# ──────────────────────────────────────────────
-# Step 2: Feature engineering
-# ──────────────────────────────────────────────
-
-def _engineer_features(daily_usage: pd.DataFrame) -> pd.DataFrame:
-    if daily_usage.empty:
-        return daily_usage
-
-    df = daily_usage.sort_values(["inventory_item_id", "Date"]).copy()
-
-    df["day_of_week"] = df["Date"].dt.dayofweek
-    df["is_weekend"] = df["day_of_week"].isin([5, 6]).astype(int)
-    df["month"] = df["Date"].dt.month
-    df["day_of_month"] = df["Date"].dt.day
-
-    grp = df.groupby("inventory_item_id")["quantity_used"]
-    df["lag_1"] = grp.shift(1)
-    df["lag_7"] = grp.shift(7)
-    df["rolling_7_avg"] = grp.transform(
-        lambda s: s.shift(1).rolling(window=7, min_periods=1).mean()
     )
-    df["rolling_30_avg"] = grp.transform(
-        lambda s: s.shift(1).rolling(window=30, min_periods=1).mean()
-    )
+    daily = raw.groupby(["inventory_item_id", "Date"], as_index=False)["quantity_used"].sum()
 
-    return df.reset_index(drop=True)
+    yesterday = pd.Timestamp(today - timedelta(days=1))
+    filled = []
+    for item_id, group in daily.groupby("inventory_item_id"):
+        calendar = pd.date_range(group["Date"].min(), yesterday, freq="D")
+        series = group.set_index("Date")["quantity_used"].reindex(calendar, fill_value=0.0)
+        filled.append(pd.DataFrame({"Date": calendar, "inventory_item_id": item_id, "quantity_used": series.to_numpy()}))
+    return pd.concat(filled, ignore_index=True)
 
 
 # ──────────────────────────────────────────────
-# Step 3: Recursive multi-day forecast
+# Step 2: Forecasting
 # ──────────────────────────────────────────────
+
+def _recent_average(history: pd.DataFrame) -> float:
+    return float(history.sort_values("Date")["quantity_used"].tail(CALIBRATION_WINDOW_DAYS).mean())
+
 
 def _forecast_ingredient(
     category_id: str,
     ing_hist: pd.DataFrame,
     horizon: int = FORECAST_DAYS,
+    start: date | None = None,
 ) -> pd.DataFrame:
-    """Recursively forecast `horizon` days of usage using the trained XGBoost model."""
+    """Recursively forecast `horizon` days starting at `start` (default: today) with the raw XGBoost model."""
     _load_model()
+    if _model is None:
+        raise RuntimeError(_model_error or "XGBoost model is not available")
     if ing_hist.empty:
         return pd.DataFrame(columns=["Date", "predicted_usage"])
 
     sorted_hist = ing_hist.sort_values("Date")
-    usage_series = list(sorted_hist["quantity_used"].values)
-    last_date = sorted_hist["Date"].max()
+    usage_series = [float(value) for value in sorted_hist["quantity_used"].to_numpy()]
+    first_day = pd.Timestamp(start or local_today())
 
-    forecasts = []
-    for step in range(1, horizon + 1):
-        future_date = last_date + pd.Timedelta(days=step)
-
-        lag_1 = usage_series[-1]
-        lag_7 = usage_series[-7] if len(usage_series) >= 7 else np.nan
-        rolling_7 = float(np.mean(usage_series[-7:]))
-        rolling_30 = float(np.mean(usage_series[-30:]))
-
+    rows = []
+    for step in range(horizon):
+        future_date = first_day + pd.Timedelta(days=step)
         row = pd.DataFrame([{
-            "Ingredient_ID": pd.Categorical([category_id], categories=_ingredient_ids)[0],
+            "Ingredient_ID": category_id,
             "day_of_week": future_date.dayofweek,
             "is_weekend": int(future_date.dayofweek in (5, 6)),
             "month": future_date.month,
             "day_of_month": future_date.day,
-            "lag_1": lag_1,
-            "lag_7": lag_7,
-            "rolling_7_avg": rolling_7,
-            "rolling_30_avg": rolling_30,
+            "lag_1": usage_series[-1],
+            "lag_7": usage_series[-7] if len(usage_series) >= 7 else np.nan,
+            "rolling_7_avg": float(np.mean(usage_series[-7:])),
+            "rolling_30_avg": float(np.mean(usage_series[-30:])),
         }])
-        row["Ingredient_ID"] = row["Ingredient_ID"].astype(
-            pd.CategoricalDtype(categories=_ingredient_ids)
-        )
+        row["Ingredient_ID"] = row["Ingredient_ID"].astype(pd.CategoricalDtype(categories=_ingredient_ids))
 
-        pred = float(_model.predict(row[FEATURE_COLS])[0])
-        pred = max(0.0, pred)
-
+        pred = max(0.0, float(_model.predict(row[FEATURE_COLS])[0]))
         usage_series.append(pred)
-        forecasts.append({"Date": future_date, "predicted_usage": pred})
+        rows.append({"Date": future_date, "predicted_usage": pred})
 
-    return pd.DataFrame(forecasts)
+    return pd.DataFrame(rows)
+
+
+def calibrate_to_recent_usage(raw_forecast: pd.DataFrame, recent_average: float) -> pd.DataFrame:
+    """Keep the model's day-to-day pattern but match this branch's recent average usage."""
+    calibrated = raw_forecast.copy()
+    raw_mean = float(calibrated["predicted_usage"].mean()) if not calibrated.empty else 0.0
+    scale = recent_average / raw_mean if raw_mean > 0 else 0.0
+    calibrated["predicted_usage"] = calibrated["predicted_usage"] * scale
+    return calibrated
+
+
+def forecast_usage(item_name: str, history: pd.DataFrame, horizon: int, start: date | None = None) -> tuple[pd.DataFrame, str]:
+    """Return (daily forecast, method) for one ingredient."""
+    first_day = pd.Timestamp(start or local_today())
+    recent_average = _recent_average(history)
+
+    category = resolve_category(item_name)
+    if category is not None:
+        _load_model()
+        if _model is not None and category in _ingredient_ids:
+            try:
+                raw = _forecast_ingredient(category, history, horizon, start)
+                return calibrate_to_recent_usage(raw, recent_average), "xgboost_calibrated"
+            except Exception:  # noqa: BLE001
+                logger.warning("XGBoost prediction failed for %s; using moving average", item_name, exc_info=True)
+
+    dates = [first_day + pd.Timedelta(days=offset) for offset in range(horizon)]
+    return pd.DataFrame({"Date": dates, "predicted_usage": [recent_average] * horizon}), "moving_average"
 
 
 # ──────────────────────────────────────────────
-# Step 4: Par-level reorder calculation
+# Step 3: Par-level reorder calculation
 # ──────────────────────────────────────────────
 
 def _compute_par_level_order(
@@ -392,7 +422,7 @@ def _compute_par_level_order(
         expected_demand = float(fc["predicted_usage"].mean() * par_days)
 
     par_level_qty = safety_level + expected_demand
-    recommended_qty = max(0.0, par_level_qty - projected_stock_on_arrival)
+    recommended_qty = max(0.0, par_level_qty - max(projected_stock_on_arrival, 0.0))
 
     return round(float(par_days), 1), round(float(recommended_qty), 2)
 
@@ -408,106 +438,65 @@ def generate_reorder_alerts(
     horizon_days: int = FORECAST_DAYS,
 ) -> list[dict[str, Any]]:
     """
-    Run the XGBoost prediction and inventory reorder pipeline for a branch:
-    1. Extract historical recipe consumption from completed orders
-    2. Engineer time-series lag and rolling average features
-    3. Resolve DB inventory names to trained XGBoost categories
-    4. Execute recursive multi-step forecasting (or fallback to rolling average)
-    5. Calculate safety breach dates, order-by deadlines, and par-level recommended restock quantities.
+    Forecast each ingredient of a branch and turn the projected stock curve into
+    safety-breach dates, order-by deadlines and par-level restock quantities.
     """
-    try:
-        _load_model()
-    except Exception as e:
-        logger.warning("Could not pre-load XGBoost model: %s", e)
-
-    inv_items = db.execute(
-        select(InventoryItem).where(InventoryItem.branch_id == branch_id)
-    ).scalars().all()
-
+    inv_items = db.scalars(
+        select(InventoryItem).where(InventoryItem.branch_id == branch_id, InventoryItem.is_active.is_(True))
+    ).all()
     if not inv_items:
         return []
 
     daily_usage = _build_daily_usage(db, branch_id, restaurant_id)
-    featured = _engineer_features(daily_usage) if not daily_usage.empty else pd.DataFrame()
+    today = local_today()
+    forecast_start = pd.Timestamp(today)
 
     alerts: list[dict[str, Any]] = []
-
     for item in inv_items:
-        ing_id_str = str(item.id)
-        ing_name = item.name
         current_stock = float(item.current_stock)
         safety_level = float(item.safety_stock_level)
         lead_time = item.reorder_delay_days or 0
         shelf_life = item.shelf_life_days or 365
+        category = resolve_category(item.name)
+        base = {
+            "id": str(item.id),
+            "ingredient_name": item.name,
+            "category_code": category,
+            "current_stock": current_stock,
+            "unit": item.unit,
+            "safety_stock": safety_level,
+            "shelf_life_days": shelf_life,
+            "reorder_delay_days": lead_time,
+        }
 
-        # Get historical usage for this specific inventory item
-        ing_history = (
-            featured[featured["inventory_item_id"] == ing_id_str]
-            if not featured.empty
-            else pd.DataFrame()
-        )
-
-        cat_id = resolve_category(ing_name)
-
-        fc = pd.DataFrame()
-        if not ing_history.empty and cat_id and _model is not None and cat_id in _ingredient_ids:
-            # Use XGBoost model
-            try:
-                fc = _forecast_ingredient(cat_id, ing_history, horizon_days)
-            except Exception as ex:
-                logger.warning("XGBoost prediction failed for %s (%s): %s", ing_name, cat_id, ex)
-
-        if fc.empty and not ing_history.empty:
-            # Fallback to rolling 7-day average projection
-            recent_avg = float(ing_history["quantity_used"].tail(7).mean())
-            if np.isnan(recent_avg) or recent_avg <= 0:
-                recent_avg = float(ing_history["quantity_used"].mean())
-            recent_avg = max(0.01, recent_avg if not np.isnan(recent_avg) else 0.1)
-
-            last_dt = ing_history["Date"].max()
-            fc = pd.DataFrame({
-                "Date": [last_dt + pd.Timedelta(days=d) for d in range(1, horizon_days + 1)],
-                "predicted_usage": [recent_avg] * horizon_days,
-            })
-
-        if fc.empty:
-            # No sales history for this ingredient: static inventory analysis
+        history = daily_usage[daily_usage["inventory_item_id"] == str(item.id)] if not daily_usage.empty else daily_usage
+        if history.empty or _recent_average(history) <= 0:
+            below_safety = current_stock <= safety_level
             if current_stock <= 0:
-                urgency = "critical"
-                status_text = "OUT OF STOCK — reorder immediately"
-            elif current_stock <= safety_level:
-                urgency = "critical"
-                status_text = f"Below safety stock ({safety_level} {item.unit})"
+                urgency, status_text = "critical", "OUT OF STOCK — reorder immediately"
+            elif below_safety:
+                urgency, status_text = "critical", f"Below safety stock ({safety_level:g} {item.unit})"
             else:
-                urgency = "ok"
-                status_text = "Stock adequate — awaiting sales history"
-
+                urgency, status_text = "ok", "Stock adequate — no recent usage recorded"
             alerts.append({
-                "id": str(item.id),
-                "ingredient_name": ing_name,
-                "category_code": cat_id,
-                "current_stock": current_stock,
-                "unit": item.unit,
-                "safety_stock": safety_level,
-                "shelf_life_days": shelf_life,
-                "reorder_delay_days": lead_time,
+                **base,
+                "method": "no_history",
+                "method_label": METHOD_LABELS["no_history"],
                 "avg_daily_usage": None,
-                "days_until_safety_breach": 0 if current_stock <= safety_level else None,
-                "order_by_date": str(date.today()) if current_stock <= safety_level else None,
+                "days_until_safety_breach": 0 if below_safety else None,
+                "order_by_date": str(today) if below_safety else None,
                 "par_coverage_days": PAR_LEVEL_DAYS_DEFAULT,
-                "recommended_order_qty": max(0.0, safety_level * 2 - current_stock) if current_stock <= safety_level else 0.0,
+                "recommended_order_qty": round(max(0.0, safety_level * 2 - current_stock), 2) if below_safety else 0.0,
                 "urgency": urgency,
                 "status": status_text,
             })
             continue
 
-        # Compute stock depletion curve
+        fc, method = forecast_usage(item.name, history, horizon_days, today)
         fc = fc.copy()
         fc["cumulative_usage"] = fc["predicted_usage"].cumsum()
         fc["projected_stock"] = current_stock - fc["cumulative_usage"]
-
         avg_daily = round(float(fc["predicted_usage"].mean()), 3)
-        forecast_start = fc["Date"].min()
 
         breach = fc[fc["projected_stock"] <= safety_level]
         if breach.empty:
@@ -518,9 +507,9 @@ def generate_reorder_alerts(
             par_days, rec_qty = PAR_LEVEL_DAYS_DEFAULT, 0.0
         else:
             first_breach = breach.iloc[0]
-            days_to_breach = (first_breach["Date"] - forecast_start).days + 1
+            days_to_breach = int((first_breach["Date"] - forecast_start).days)
             order_by_dt = first_breach["Date"] - pd.Timedelta(days=lead_time)
-            order_by = str(order_by_dt.date())
+            order_by = str(max(order_by_dt, forecast_start).date())
 
             par_days, rec_qty = _compute_par_level_order(
                 fc, current_stock, safety_level, lead_time, shelf_life,
@@ -541,14 +530,9 @@ def generate_reorder_alerts(
                 status_text = f"Order by {order_by}"
 
         alerts.append({
-            "id": str(item.id),
-            "ingredient_name": ing_name,
-            "category_code": cat_id,
-            "current_stock": current_stock,
-            "unit": item.unit,
-            "safety_stock": safety_level,
-            "shelf_life_days": shelf_life,
-            "reorder_delay_days": lead_time,
+            **base,
+            "method": method,
+            "method_label": METHOD_LABELS[method],
             "avg_daily_usage": avg_daily,
             "days_until_safety_breach": days_to_breach,
             "order_by_date": order_by,
@@ -558,7 +542,6 @@ def generate_reorder_alerts(
             "status": status_text,
         })
 
-    # Sort alerts: critical first (0), warning (1), ok (2), then by days_until_safety_breach ascending
     urgency_order = {"critical": 0, "warning": 1, "ok": 2}
     alerts.sort(
         key=lambda a: (
@@ -566,5 +549,53 @@ def generate_reorder_alerts(
             a["days_until_safety_breach"] if a["days_until_safety_breach"] is not None else 9999,
         )
     )
-
     return alerts
+
+
+# ──────────────────────────────────────────────
+# Dish demand (used by the Copilot)
+# ──────────────────────────────────────────────
+
+def forecast_dish_demand(
+    db: Session,
+    restaurant_id: UUID,
+    branch_id: UUID | None,
+    days: int = 7,
+    window_days: int = CALIBRATION_WINDOW_DAYS,
+) -> list[dict[str, Any]]:
+    """Estimate dish sales for the next `days` days from same-weekday averages over the last `window_days`."""
+    today = local_today()
+    window_start = today - timedelta(days=window_days)
+    filters = [
+        Order.restaurant_id == restaurant_id,
+        Order.status == "COMPLETED",
+        Order.ordered_at >= day_start_utc(window_start),
+        Order.ordered_at < day_start_utc(today),
+    ]
+    if branch_id is not None:
+        filters.append(Order.branch_id == branch_id)
+    rows = db.execute(
+        select(Order.ordered_at, MenuItem.name, OrderItem.quantity)
+        .join(OrderItem, OrderItem.order_id == Order.id)
+        .join(MenuItem, MenuItem.id == OrderItem.menu_item_id)
+        .where(*filters)
+    ).all()
+
+    weekday_counts = [0] * 7
+    for offset in range(window_days):
+        weekday_counts[(window_start + timedelta(days=offset)).weekday()] += 1
+    totals: dict[str, list[float]] = {}
+    for ordered_at, name, quantity in rows:
+        totals.setdefault(name, [0.0] * 7)[local_date(ordered_at).weekday()] += quantity
+
+    forecast = []
+    for offset in range(days):
+        day = today + timedelta(days=offset)
+        for name, by_weekday in totals.items():
+            occurrences = weekday_counts[day.weekday()]
+            forecast.append({
+                "dish": name,
+                "date": day.isoformat(),
+                "predicted_quantity": round(by_weekday[day.weekday()] / occurrences, 1) if occurrences else 0.0,
+            })
+    return forecast

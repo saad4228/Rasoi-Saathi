@@ -92,7 +92,7 @@ export default function Features() {
             Six Modules. <span className="text-accent">One Operating System.</span>
           </h2>
           <p className="text-muted max-w-xl mx-auto">
-            Pick the modules your restaurant needs, connect them when you're ready,
+            Pick the modules your restaurant needs, connect them when you&apos;re ready,
             and let the AI Copilot reason across all of it.
           </p>
         </div>

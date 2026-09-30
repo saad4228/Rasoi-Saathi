@@ -1,18 +1,18 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
 from app.rag.retriever import get_policy_context
+from app.services.reporting import day_start_utc, local_today
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.branch import Branch
-from app.models.demand_forecast import DemandForecast
 from app.models.inventory_item import InventoryItem
 from app.models.menu_item import MenuItem
 from app.models.menu_item_ingredient import MenuItemIngredient
@@ -32,7 +32,7 @@ dish performance, recipe-based gross profit, pricing, break-even volume,
 order-source performance, stock risks, demand forecasts, and reordering.
 
 Rules:
-- Answer in the manager's language where practical (English, Hindi, Marathi, or Hinglish).
+- Reply in the language of the manager's latest message. English questions get English answers; use Hindi, Marathi or Hinglish only when the manager writes in it.
 - Never invent business figures. Call the relevant tool for all data-dependent claims.
 - Tools are restricted to the authenticated restaurant and selected branch. Never ask for or expose IDs.
 - Call results labelled gross profit exclude rent, salaries, utilities, marketing, and other operating expenses.
@@ -100,19 +100,28 @@ class CopilotService:
         filters: list[Any] = [
             Order.restaurant_id == self.restaurant_id,
             Order.status == "COMPLETED",
-            Order.ordered_at >= datetime.now(timezone.utc) - timedelta(days=days),
+            # The last `days` business days, today included (local calendar days, not rolling hours).
+            Order.ordered_at >= day_start_utc(local_today() - timedelta(days=days - 1)),
         ]
         if self.branch_id is not None:
             filters.append(Order.branch_id == self.branch_id)
         return filters
 
     def _dish(self, dish_name: str) -> MenuItem | None:
-        if not dish_name.strip():
+        name = dish_name.strip()
+        if not name:
             return None
+        exact = self.db.scalar(
+            select(MenuItem).where(MenuItem.restaurant_id == self.restaurant_id, func.lower(MenuItem.name) == name.lower())
+        )
+        if exact is not None:
+            return exact
+        # Otherwise the closest partial match: "biryani" -> "Chicken Biryani" before "Chicken Biryani Family Pack".
+        pattern = "%" + name.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
         return self.db.scalar(
             select(MenuItem)
-            .where(MenuItem.restaurant_id == self.restaurant_id, MenuItem.name.ilike(f"%{dish_name.strip()}%"))
-            .order_by(MenuItem.name)
+            .where(MenuItem.restaurant_id == self.restaurant_id, MenuItem.name.ilike(pattern, escape="\\"))
+            .order_by(func.length(MenuItem.name), MenuItem.name)
         )
 
     def _dish_sales(self, dish: MenuItem, days: int) -> tuple[int, Decimal]:
@@ -191,21 +200,43 @@ class CopilotService:
         days = _days(days, 30)
         rows = self.db.execute(
             select(Branch.id, Branch.address, func.count(Order.id), func.coalesce(func.sum(Order.total_amount), 0))
-            .outerjoin(Order, (Order.branch_id == Branch.id) & (Order.restaurant_id == self.restaurant_id) & (Order.status == "COMPLETED") & (Order.ordered_at >= datetime.now(timezone.utc) - timedelta(days=days)))
+            .outerjoin(Order, (Order.branch_id == Branch.id) & (Order.restaurant_id == self.restaurant_id) & (Order.status == "COMPLETED") & (Order.ordered_at >= day_start_utc(local_today() - timedelta(days=days - 1))))
             .where(Branch.restaurant_id == self.restaurant_id, Branch.is_active.is_(True)).group_by(Branch.id).order_by(func.coalesce(func.sum(Order.total_amount), 0).desc())
         ).all()
-        return {"period_days": days, "branches": [{"branch_id": str(row[0]), "branch": row[1] or "Unnamed branch", "completed_orders": int(row[2]), "revenue": round(_number(row[3]), 2), "average_order_value": round(_number(Decimal(row[3] or 0) / row[2]), 2) if row[2] else 0} for row in rows]}
+        return {"period_days": days, "branches": [{"branch": row[1] or "Unnamed branch", "completed_orders": int(row[2]), "revenue": round(_number(row[3]), 2), "average_order_value": round(_number(Decimal(row[3] or 0) / row[2]), 2) if row[2] else 0} for row in rows]}
 
     def sales_trends(self, days: int = 7) -> dict[str, Any]:
-        days = _days(days, 7); current_start = datetime.now(timezone.utc) - timedelta(days=days); previous_start = current_start - timedelta(days=days)
-        filters = self._order_filters(days)
-        current = self.db.execute(select(func.count(Order.id), func.coalesce(func.sum(Order.total_amount), 0)).where(*filters)).one()
-        previous_filters = [Order.restaurant_id == self.restaurant_id, Order.status == "COMPLETED", Order.ordered_at >= previous_start, Order.ordered_at < current_start]
-        if self.branch_id is not None: previous_filters.append(Order.branch_id == self.branch_id)
-        previous = self.db.execute(select(func.count(Order.id), func.coalesce(func.sum(Order.total_amount), 0)).where(*previous_filters)).one()
-        current_revenue, previous_revenue = Decimal(current[1] or 0), Decimal(previous[1] or 0)
+        """Compare the last `days` complete days with the `days` before them (today is excluded while in progress)."""
+        days = _days(days, 7)
+        today = local_today()
+        periods = {
+            "current": (today - timedelta(days=days), today),
+            "previous": (today - timedelta(days=2 * days), today - timedelta(days=days)),
+        }
+        totals: dict[str, dict[str, Any]] = {}
+        for label, (first_day, end_day) in periods.items():
+            filters = [
+                Order.restaurant_id == self.restaurant_id,
+                Order.status == "COMPLETED",
+                Order.ordered_at >= day_start_utc(first_day),
+                Order.ordered_at < day_start_utc(end_day),
+            ]
+            if self.branch_id is not None:
+                filters.append(Order.branch_id == self.branch_id)
+            count, revenue = self.db.execute(select(func.count(Order.id), func.coalesce(func.sum(Order.total_amount), 0)).where(*filters)).one()
+            totals[label] = {
+                "dates": f"{first_day.isoformat()} to {(end_day - timedelta(days=1)).isoformat()}",
+                "completed_orders": int(count),
+                "revenue": round(_number(revenue), 2),
+            }
+        current_revenue, previous_revenue = Decimal(str(totals["current"]["revenue"])), Decimal(str(totals["previous"]["revenue"]))
         change = (current_revenue - previous_revenue) / previous_revenue * 100 if previous_revenue else None
-        return {"period_days": days, "current": {"completed_orders": int(current[0]), "revenue": round(_number(current_revenue), 2)}, "previous": {"completed_orders": int(previous[0]), "revenue": round(_number(previous_revenue), 2)}, "revenue_change_percent": round(_number(change), 2) if change is not None else None}
+        return {
+            "period_days": days,
+            "note": "Complete days only; today is still in progress.",
+            **totals,
+            "revenue_change_percent": round(_number(change), 2) if change is not None else None,
+        }
 
     def dish_performance(self, days: int = 30, limit: int = 10) -> dict[str, Any]:
         days = _days(days, 30); limit = max(1, min(int(limit), 20))
@@ -222,30 +253,57 @@ class CopilotService:
         return {"period_days": days, "sources": [{"source": row[0], "completed_orders": int(row[1]), "revenue": round(_number(row[2]), 2), "average_order_value": round(_number(Decimal(row[2] or 0) / row[1]), 2) if row[1] else 0} for row in rows]}
 
     def low_stock(self) -> dict[str, Any]:
-        filters: list[Any] = [InventoryItem.branch.has(restaurant_id=self.restaurant_id), InventoryItem.current_stock <= InventoryItem.safety_stock_level]
+        filters: list[Any] = [InventoryItem.branch.has(restaurant_id=self.restaurant_id), InventoryItem.is_active.is_(True), InventoryItem.current_stock <= InventoryItem.safety_stock_level]
         if self.branch_id is not None: filters.append(InventoryItem.branch_id == self.branch_id)
-        items = self.db.scalars(select(InventoryItem).where(*filters).order_by(InventoryItem.current_stock, InventoryItem.name)).all()
-        return {"items": [{"ingredient": item.name, "branch_id": str(item.branch_id), "current_stock": _number(item.current_stock), "safety_stock_level": _number(item.safety_stock_level), "unit": item.unit} for item in items]}
+        items = self.db.scalars(
+            select(InventoryItem).options(selectinload(InventoryItem.branch)).where(*filters).order_by(InventoryItem.current_stock, InventoryItem.name)
+        ).all()
+        return {"items": [{"ingredient": item.name, "branch": item.branch.address or "Unnamed branch", "current_stock": _number(item.current_stock), "safety_stock_level": _number(item.safety_stock_level), "unit": item.unit} for item in items]}
 
     def forecast(self, days: int = 7) -> dict[str, Any]:
-        days = _days(days, 7); filters: list[Any] = [DemandForecast.forecast_date >= date.today(), DemandForecast.forecast_date <= date.today() + timedelta(days=days), MenuItem.restaurant_id == self.restaurant_id]
-        if self.branch_id is not None: filters.append(DemandForecast.branch_id == self.branch_id)
-        rows = self.db.execute(select(DemandForecast, MenuItem.name).join(MenuItem, MenuItem.id == DemandForecast.menu_item_id).where(*filters).order_by(DemandForecast.forecast_date, MenuItem.name)).all()
-        return {"forecast_days": days, "forecasts": [{"dish": row[1], "branch_id": str(row[0].branch_id), "date": row[0].forecast_date.isoformat(), "predicted_quantity": _number(row[0].predicted_quantity)} for row in rows]}
+        """Dish demand estimated from same-weekday averages of recent completed sales."""
+        from app.ml.forecaster import forecast_dish_demand
+
+        days = _days(days, 7)
+        forecasts = forecast_dish_demand(self.db, self.restaurant_id, self.branch_id, days=min(days, 14))
+        return {
+            "forecast_days": min(days, 14),
+            "method": "Average sales on the same weekday over the last 28 days (estimate)",
+            "forecasts": forecasts,
+        }
 
     def reorder_suggestions(self, days: int = 7) -> dict[str, Any]:
-        if self.branch_id is None: return {"error": "Select a branch for reorder suggestions."}
-        days = _days(days, 7)
-        rows = self.db.execute(
-            select(InventoryItem.name, InventoryItem.unit, InventoryItem.current_stock, InventoryItem.safety_stock_level, InventoryItem.cost_per_unit, func.coalesce(func.sum(DemandForecast.predicted_quantity * MenuItemIngredient.quantity_per_unit), 0))
-            .select_from(DemandForecast).join(MenuItemIngredient, MenuItemIngredient.menu_item_id == DemandForecast.menu_item_id).join(InventoryItem, InventoryItem.id == MenuItemIngredient.inventory_item_id)
-            .where(DemandForecast.branch_id == self.branch_id, InventoryItem.branch_id == self.branch_id, DemandForecast.forecast_date >= date.today(), DemandForecast.forecast_date <= date.today() + timedelta(days=days)).group_by(InventoryItem.id).order_by(InventoryItem.name)
-        ).all()
-        suggestions = []
-        for row in rows:
-            required = Decimal(row[5] or 0) + row[3] - row[2]
-            if required > 0: suggestions.append({"ingredient": row[0], "unit": row[1], "forecast_requirement": round(_number(row[5]), 3), "current_stock": _number(row[2]), "recommended_order_quantity": round(_number(required), 3), "estimated_cost": round(_number(required * row[4]), 2)})
-        return {"forecast_days": days, "suggestions": suggestions}
+        """Same reorder engine as the Inventory page's 'What to Buy' list."""
+        if self.branch_id is None:
+            return {"error": "Select a branch for reorder suggestions."}
+        try:
+            from app.ml.forecaster import generate_reorder_alerts
+        except ImportError:
+            return {"error": "Forecasting dependencies are not installed on the server."}
+
+        horizon = max(7, _days(days, 7))
+        alerts = generate_reorder_alerts(self.db, self.branch_id, self.restaurant_id, horizon_days=horizon)
+        costs = {
+            item.name: item.cost_per_unit
+            for item in self.db.scalars(select(InventoryItem).where(InventoryItem.branch_id == self.branch_id, InventoryItem.is_active.is_(True))).all()
+        }
+        suggestions = [
+            {
+                "ingredient": alert["ingredient_name"],
+                "unit": alert["unit"],
+                "current_stock": alert["current_stock"],
+                "average_daily_usage_forecast": alert["avg_daily_usage"],
+                "days_until_safety_stock": alert["days_until_safety_breach"],
+                "order_by": alert["order_by_date"],
+                "recommended_order_quantity": alert["recommended_order_qty"],
+                "estimated_cost": round(_number(Decimal(str(alert["recommended_order_qty"])) * costs.get(alert["ingredient_name"], Decimal("0"))), 2),
+                "urgency": alert["urgency"],
+                "forecast_method": alert["method_label"],
+            }
+            for alert in alerts
+            if alert["recommended_order_qty"] > 0 or alert["urgency"] != "ok"
+        ]
+        return {"forecast_days": horizon, "suggestions": suggestions}
 
 
 FUNCTION_DECLARATIONS = [
@@ -258,8 +316,8 @@ FUNCTION_DECLARATIONS = [
     {"name": "dish_performance", "description": "List best-performing dishes by completed-sales revenue.", "parameters": {"type": "object", "properties": {"days": {"type": "integer"}, "limit": {"type": "integer"}}}},
     {"name": "source_performance", "description": "Compare completed order performance across POS, WhatsApp, Swiggy and Zomato.", "parameters": {"type": "object", "properties": {"days": {"type": "integer"}}}},
     {"name": "low_stock", "description": "List ingredients at or below safety stock.", "parameters": {"type": "object", "properties": {}}},
-    {"name": "forecast", "description": "Get stored dish demand forecasts.", "parameters": {"type": "object", "properties": {"days": {"type": "integer"}}}},
-    {"name": "reorder_suggestions", "description": "Suggest purchases from forecasts, recipes, stock and safety stock; needs a branch.", "parameters": {"type": "object", "properties": {"days": {"type": "integer"}}}},
+    {"name": "forecast", "description": "Estimate upcoming dish demand from recent same-weekday sales.", "parameters": {"type": "object", "properties": {"days": {"type": "integer"}}}},
+    {"name": "reorder_suggestions", "description": "Forecast ingredient usage and suggest what to buy and by when; needs a branch.", "parameters": {"type": "object", "properties": {"days": {"type": "integer"}}}},
 ]
 
 
@@ -279,7 +337,7 @@ class GeminiCopilot:
         }
         return tools.get(name, lambda: {"error": "Requested action is not available."})()
 
-    def answer(self, message: str) -> str:
+    def answer(self, message: str, history: list[tuple[str, str]] | None = None) -> str:
         if not self.api_key: raise CopilotUnavailableError("AI Copilot is not configured. Add GEMINI_API_KEY to the backend environment.")
         try:
             from google import genai
@@ -291,7 +349,11 @@ class GeminiCopilot:
         policy_context = get_policy_context(message, self.api_key)
         system_instruction = f"{SYSTEM_PROMPT}\n\n{policy_context}".strip() if policy_context else SYSTEM_PROMPT
         config = types.GenerateContentConfig(system_instruction=system_instruction, tools=[types.Tool(function_declarations=FUNCTION_DECLARATIONS)], temperature=0.2)
-        contents = [types.Content(role="user", parts=[types.Part(text=message)])]
+        contents = [
+            types.Content(role="model" if role == "assistant" else "user", parts=[types.Part(text=text)])
+            for role, text in (history or [])[-20:]
+        ]
+        contents.append(types.Content(role="user", parts=[types.Part(text=message)]))
         for _ in range(4):
             try: response = client.models.generate_content(model=self.model, contents=contents, config=config)
             except Exception as exc: raise CopilotUnavailableError("AI Copilot could not reach Gemini. Please try again shortly.") from exc

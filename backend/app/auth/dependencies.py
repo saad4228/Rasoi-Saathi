@@ -33,8 +33,17 @@ def get_current_user(
     user_id = get_authenticated_user_id(credentials)
 
     user = db.scalar(select(User).where(User.id == user_id))
-    if user is None or not user.is_active:
-        raise _unauthorized("Application user is not active")
+    if user is None:
+        # The login is valid but no workspace profile exists yet: the client should run onboarding.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "profile_missing", "message": "No Rasoi Saathi workspace is linked to this login yet."},
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "account_inactive", "message": "This staff account has been deactivated. Ask the restaurant owner to reactivate it."},
+        )
 
     return user
 

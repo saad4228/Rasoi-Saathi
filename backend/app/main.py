@@ -1,35 +1,75 @@
 import logging
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.config import get_settings
 from app.routers.auth import router as auth_router
 from app.routers.copilot import router as copilot_router
+from app.routers.demo import router as demo_router
 from app.routers.operations import router as operations_router
 from app.routers.whatsapp import router as whatsapp_router
 
 logger = logging.getLogger(__name__)
 
+
+class UnhandledErrorMiddleware:
+    """Turn unhandled exceptions into JSON 500s *inside* the CORS middleware.
+
+    Starlette routes `@app.exception_handler(Exception)` to ServerErrorMiddleware,
+    which sits outside every user middleware, so those responses never receive
+    CORS headers and browsers report a network failure instead of the error.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        response_started = False
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tracking_send)
+        except Exception:
+            logger.exception("Unhandled exception on %s %s", scope.get("method"), scope.get("path"))
+            if response_started:
+                raise
+            response = JSONResponse(
+                status_code=500,
+                content={"detail": "An unexpected server error occurred. Please try again."},
+            )
+            await response(scope, receive, send)
+
+
 settings = get_settings()
-allowed_origins = list({
-    settings.frontend_url,
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:5173",
-})
+allowed_origins = [origin.strip().rstrip("/") for origin in settings.frontend_url.split(",") if origin.strip()]
+# Any local port is allowed: `next dev` silently moves to 3001, 3002, ... when 3000 is busy,
+# and a blocked CORS request looks like a failed login in the browser.
+LOCAL_DEV_ORIGINS = r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
 
 app = FastAPI(
     title="Rasoi Saathi API",
     version="1.0.0"
 )
 
-# CORS must be added BEFORE the global exception handler so it wraps everything
+# Middleware added last runs first: CORS must wrap the error middleware so
+# error responses still carry CORS headers.
+app.add_middleware(UnhandledErrorMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=LOCAL_DEV_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,22 +77,9 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(copilot_router)
+app.include_router(demo_router)
 app.include_router(operations_router)
 app.include_router(whatsapp_router)
-
-
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Catch-all handler so every 500 gets a JSON body.
-    Starlette's CORSMiddleware can only attach headers to proper ASGI responses;
-    unhandled exceptions that bubble up as raw exceptions bypass it.
-    By catching them here and returning a JSONResponse we guarantee CORS headers
-    are always present on error responses."""
-    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "An unexpected server error occurred. Please try again."},
-    )
 
 
 @app.get("/health")

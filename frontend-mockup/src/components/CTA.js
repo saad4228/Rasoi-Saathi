@@ -1,3 +1,4 @@
+import Link from "next/link";
 import Reveal from "./Reveal";
 
 export default function CTA() {
@@ -10,11 +11,11 @@ export default function CTA() {
             Ready to Run Your Restaurant on Autopilot?
           </h2>
           <p className="text-blue-100 max-w-md mx-auto mb-8">
-            Join restaurants replacing guesswork with a system that tells you what's happening — and why.
+            Join restaurants replacing guesswork with a system that tells you what&apos;s happening — and why.
           </p>
-          <button className="bg-gradient-to-r from-accent to-accent-2 text-white font-bold px-7 py-3.5 rounded-xl hover:-translate-y-0.5 transition-transform">
-            Book a Personalized Demo →
-          </button>
+          <Link href="/signup" className="inline-block bg-gradient-to-r from-accent to-accent-2 text-white font-bold px-7 py-3.5 rounded-xl hover:-translate-y-0.5 transition-transform">
+            Create your free workspace →
+          </Link>
         </div>
       </Reveal>
     </section>

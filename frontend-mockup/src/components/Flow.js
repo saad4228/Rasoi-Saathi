@@ -16,7 +16,7 @@ export default function Flow() {
           From Order to Insight, <span className="text-accent">Automatically</span>
         </h2>
         <p className="text-muted max-w-xl mx-auto mb-16">
-          Every step of a restaurant's day, connected — so nothing falls through the cracks
+          Every step of a restaurant&apos;s day, connected — so nothing falls through the cracks
           and every decision has an answer behind it.
         </p>
       </Reveal>

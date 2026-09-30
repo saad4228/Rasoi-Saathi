@@ -2,23 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { supabase } from "@/lib/supabase";
-import {
-  Utensils,
-  Sparkles,
-  ShieldCheck,
-  Building,
-  Mail,
-  Lock,
-  Phone,
-  ArrowRight,
-  CheckCircle2,
-} from "lucide-react";
+import { Sparkles, ArrowRight, CheckCircle2 } from "lucide-react";
 
 export default function SignupPage() {
-  const { signUp } = useAuth();
+  const { signUp, session, applicationUser, loading } = useAuth();
   const router = useRouter();
 
   const [form, setForm] = useState({
@@ -28,7 +18,7 @@ export default function SignupPage() {
     restaurant_name: "",
     restaurant_email: "",
     restaurant_phone: "",
-    city: "Mumbai",
+    branch_address: "",
   });
 
   const [error, setError] = useState("");
@@ -37,6 +27,11 @@ export default function SignupPage() {
 
   const update = (field) => (event) =>
     setForm({ ...form, [field]: event.target.value });
+
+  // Already have a workspace: nothing to sign up for.
+  useEffect(() => {
+    if (!loading && session && applicationUser) router.replace("/dashboard");
+  }, [loading, session, applicationUser, router]);
 
   async function submit(event) {
     event.preventDefault();
@@ -56,13 +51,14 @@ export default function SignupPage() {
         restaurant_email: form.restaurant_email || form.email,
         restaurant_phone: form.restaurant_phone || null,
         owner_name: form.name,
+        branch_address: form.branch_address || null,
       });
 
       if (data.session) {
         router.replace("/dashboard");
       } else {
         setMessage(
-          "Account created! Check your inbox to confirm your email, or sign in now."
+          "Account created! Confirm your email from the link we sent, then sign in — your workspace will be set up automatically."
         );
       }
     } catch (requestError) {
@@ -116,7 +112,7 @@ export default function SignupPage() {
                 </label>
                 <input
                   className="w-full rounded-xl border border-border bg-surface-2 px-3.5 py-2.5 text-sm text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent transition"
-                  placeholder="e.g. Sambodhi Bhowal"
+                  placeholder="e.g. Asha Kulkarni"
                   required
                   value={form.name}
                   onChange={update("name")}
@@ -163,6 +159,18 @@ export default function SignupPage() {
                   onChange={update("restaurant_phone")}
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-ink uppercase tracking-wider mb-1.5">
+                First Outlet Address <span className="normal-case font-medium text-muted">(optional)</span>
+              </label>
+              <input
+                className="w-full rounded-xl border border-border bg-surface-2 px-3.5 py-2.5 text-sm text-ink outline-none focus:border-accent focus:ring-1 focus:ring-accent transition"
+                placeholder="e.g. 12 Central Market, Nagpur"
+                value={form.branch_address}
+                onChange={update("branch_address")}
+              />
             </div>
 
             <div>

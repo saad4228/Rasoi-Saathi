@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useState } from "react";
 import Reveal from "./Reveal";
 
@@ -36,7 +37,7 @@ export default function Pricing() {
             Priced Like the Restaurants <span className="text-accent">We Serve</span>
           </h2>
           <p className="text-muted max-w-xl mx-auto">
-            Every restaurant's problems are different — buy exactly the modules you need.
+            Every restaurant&apos;s problems are different — buy exactly the modules you need.
             Nothing forced, nothing wasted.
           </p>
         </div>
@@ -121,9 +122,12 @@ export default function Pricing() {
               </div>
             </div>
 
-            <button className="w-full bg-gradient-to-r from-accent to-accent-2 text-white font-bold py-3.5 rounded-xl hover:-translate-y-0.5 transition-transform">
-              Book a Personalized Demo →
-            </button>
+            <Link
+              href="/signup"
+              className="block text-center w-full bg-gradient-to-r from-accent to-accent-2 text-white font-bold py-3.5 rounded-xl hover:-translate-y-0.5 transition-transform"
+            >
+              Create your free workspace →
+            </Link>
             <p className="text-xs text-muted text-center mt-3">
               Free tier removes signup friction. Standard 14-day trial applies.
             </p>

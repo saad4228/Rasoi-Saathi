@@ -3,6 +3,7 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from app.database import SessionLocal
+from app.demo import DEMO_RESTAURANT_ID
 from app.models.branch import Branch
 from app.models.inventory_item import InventoryItem
 from app.models.menu_item import MenuItem
@@ -44,9 +45,10 @@ MENU = [
 
 def seed() -> None:
     with SessionLocal() as db:
-        restaurant = db.scalar(select(Restaurant).order_by(Restaurant.created_at).limit(1))
+        # Your own workspace: the oldest restaurant that isn't the public demo.
+        restaurant = db.scalar(select(Restaurant).where(Restaurant.id != DEMO_RESTAURANT_ID).order_by(Restaurant.created_at).limit(1))
         if restaurant is None:
-            raise RuntimeError("No restaurant exists. Run the restaurant onboarding seed first.")
+            raise RuntimeError("No restaurant yet. Sign up in the app first (it creates your restaurant), then run this again.")
 
         branch = db.scalar(
             select(Branch)

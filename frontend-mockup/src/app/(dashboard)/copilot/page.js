@@ -1,23 +1,22 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
-import { Send, Sparkles, TrendingUp, Package, Receipt } from "lucide-react";
-import { useAuth } from "@/context/AuthContext";
+import { Send, Sparkles } from "lucide-react";
+import { useOutlets } from "@/context/OutletContext";
 import { apiRequest } from "@/services/api";
 
 const suggestedPrompts = [
-  "Why did my profit drop this week?",
+  "How did sales this week compare with last week?",
   "What happens if I raise Chicken Biryani price by ₹10?",
-  "Predict tomorrow's chicken demand",
-  "Which dish is losing me money?",
+  "What should I reorder for the next week?",
+  "Which dishes have the lowest margin?",
 ];
+const HISTORY_TURNS = 10;
 
 export default function CopilotPage() {
-  const { session } = useAuth();
+  const { activeOutletId, activeOutlet } = useOutlets();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [branches, setBranches] = useState([]);
-  const [branchId, setBranchId] = useState("");
   const [error, setError] = useState("");
   const scrollRef = useRef(null);
 
@@ -25,18 +24,9 @@ export default function CopilotPage() {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
-  useEffect(() => {
-    if (!session) return;
-    apiRequest("/api/branches", {}, session)
-      .then((loadedBranches) => {
-        setBranches(loadedBranches);
-        setBranchId((current) => current || loadedBranches[0]?.id || "");
-      })
-      .catch((requestError) => setError(requestError.message || "Unable to load branches."));
-  }, [session]);
-
   const sendMessage = async (text) => {
-    if (!text.trim()) return;
+    if (!text.trim() || isTyping) return;
+    const history = messages.slice(-HISTORY_TURNS).map((message) => ({ role: message.role, text: message.text }));
 
     setMessages((prev) => [...prev, { role: "user", text }]);
     setInput("");
@@ -46,14 +36,9 @@ export default function CopilotPage() {
     try {
       const response = await apiRequest("/api/copilot/chat", {
         method: "POST",
-        body: JSON.stringify({ message: text, branch_id: branchId || null }),
-      }, session);
-      setMessages((prev) => [...prev, {
-        role: "assistant",
-        type: "plain",
-        text: response.answer,
-        basedOn: ["Live restaurant data"],
-      }]);
+        body: JSON.stringify({ message: text, branch_id: activeOutletId, history }),
+      });
+      setMessages((prev) => [...prev, { role: "assistant", text: response.answer, basedOn: [activeOutlet?.address || "Your restaurant data"] }]);
     } catch (requestError) {
       setError(requestError.message || "The Copilot could not answer right now.");
     } finally {
@@ -62,17 +47,14 @@ export default function CopilotPage() {
   };
 
   return (
-    <div className="relative flex flex-col h-screen overflow-hidden">
-      {/* Radial glow background */}
+    <div className="relative flex flex-col h-[calc(100vh-7rem)] overflow-hidden rounded-2xl border border-border">
       <div
         className="pointer-events-none absolute inset-0 -z-10"
         style={{
-          background:
-            "radial-gradient(ellipse 800px 500px at 50% 45%, rgba(230,82,43,0.18), transparent 70%)",
+          background: "radial-gradient(ellipse 800px 500px at 50% 45%, rgba(230,82,43,0.18), transparent 70%)",
         }}
       />
 
-      {/* Header */}
       <div className="flex items-center gap-3 px-6 py-4 border-b border-border bg-surface">
         <div className="w-9 h-9 rounded-full bg-gradient-to-br from-orange-500 to-amber-400 flex items-center justify-center">
           <Sparkles size={18} className="text-white" />
@@ -81,32 +63,22 @@ export default function CopilotPage() {
           <p className="font-semibold text-ink text-sm">RasoiSaathi Copilot</p>
           <p className="text-xs text-muted flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-            Live restaurant data
+            {activeOutlet ? `Branch questions use ${activeOutlet.address}` : "Live restaurant data"}
           </p>
         </div>
-        {branches.length > 0 && (
-          <select
-            value={branchId}
-            onChange={(event) => setBranchId(event.target.value)}
-            className="ml-auto bg-surface-2 border border-border rounded-lg px-3 py-2 text-xs text-ink outline-none"
-            aria-label="Selected branch"
-          >
-            {branches.map((branch) => (
-              <option key={branch.id} value={branch.id}>{branch.address || "Branch"}</option>
-            ))}
-          </select>
+        {messages.length > 0 && (
+          <button onClick={() => setMessages([])} className="ml-auto text-xs font-semibold text-muted hover:text-ink">
+            New conversation
+          </button>
         )}
       </div>
 
-      {/* Chat area */}
       <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
         {messages.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-center px-4">
             <div className="flex items-center gap-3 mb-8">
               <Sparkles className="w-7 h-7 text-orange-500" strokeWidth={1.5} />
-              <h2 className="text-3xl font-serif text-ink">
-                What shall we cook up today?
-              </h2>
+              <h2 className="text-3xl font-serif text-ink">What shall we cook up today?</h2>
             </div>
             <div className="flex flex-wrap justify-center gap-2 max-w-lg">
               {suggestedPrompts.map((prompt) => (
@@ -128,16 +100,11 @@ export default function CopilotPage() {
 
         {isTyping && <TypingBubble />}
 
-        {error && (
-          <p className="text-sm text-red-500 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-            {error}
-          </p>
-        )}
+        {error && <p className="text-sm text-red-500 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>}
 
         <div ref={scrollRef} />
       </div>
 
-      {/* Input */}
       <div className="border-t border-border bg-surface px-6 py-4">
         <form
           onSubmit={(e) => {
@@ -149,13 +116,15 @@ export default function CopilotPage() {
           <input
             type="text"
             value={input}
+            maxLength={2000}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask the Copilot anything about your restaurant..."
             className="flex-1 bg-surface-2 border border-border rounded-lg px-4 py-2.5 text-sm text-ink placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-accent/40"
           />
           <button
             type="submit"
-            disabled={!input.trim()}
+            disabled={!input.trim() || isTyping}
+            aria-label="Send"
             className="w-10 h-10 shrink-0 rounded-lg bg-gradient-to-r from-orange-500 to-amber-400 text-white flex items-center justify-center disabled:opacity-40 hover:opacity-90 transition-opacity"
           >
             <Send size={16} />

@@ -6,6 +6,8 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from sqlalchemy import select
 
 from app.database import SessionLocal
+from app.demo import DEMO_RESTAURANT_ID
+from app.services.reporting import business_tz, local_today
 from app.models.branch import Branch
 from app.models.menu_item import MenuItem
 from app.models.order import Order
@@ -22,12 +24,13 @@ def stable_id(kind: str, value: str) -> UUID:
 
 def seed() -> None:
     random = Random(20260822)
-    now = datetime.now(timezone.utc)
+    today = local_today()
 
     with SessionLocal() as db:
-        restaurant = db.scalar(select(Restaurant).order_by(Restaurant.created_at).limit(1))
+        # Your own workspace: the oldest restaurant that isn't the public demo.
+        restaurant = db.scalar(select(Restaurant).where(Restaurant.id != DEMO_RESTAURANT_ID).order_by(Restaurant.created_at).limit(1))
         if restaurant is None:
-            raise RuntimeError("No restaurant exists. Run the restaurant onboarding seed first.")
+            raise RuntimeError("No restaurant yet. Sign up in the app first (it creates your restaurant), then run this again.")
 
         branches = db.scalars(
             select(Branch)
@@ -66,7 +69,7 @@ def seed() -> None:
         created_orders = 0
         created_items = 0
         for days_ago in range(27, -1, -1):
-            service_date = (now - timedelta(days=days_ago)).date()
+            service_date = today - timedelta(days=days_ago)
             order_count = 10 + random.randint(0, 10)
             for order_number in range(order_count):
                 order_key = f"{service_date.isoformat()}:{order_number}"
@@ -81,7 +84,8 @@ def seed() -> None:
                     order_type = "DELIVERY"
                 hour = random.choices([11, 12, 13, 14, 18, 19, 20, 21], weights=[4, 7, 11, 5, 6, 10, 9, 5])[0]
                 minute = random.randrange(0, 60)
-                ordered_at = datetime.combine(service_date, time(hour, minute), tzinfo=timezone.utc)
+                # Lunch/dinner hours are local restaurant time, stored as UTC.
+                ordered_at = datetime.combine(service_date, time(hour, minute), tzinfo=business_tz()).astimezone(timezone.utc)
 
                 selected = [random.choice(weighted_menu)]
                 if random.random() < 0.52:

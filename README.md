@@ -2,21 +2,40 @@
 
 > **Next-Generation Omnichannel Restaurant Operating System, AI Kitchen Copilot & WhatsApp Automated Ordering Engine**
 
+## ⚡ Quick Start (Windows)
+
+Double-click **`dev.cmd`** (or run `.\dev.cmd` in a terminal). It checks your setup, installs anything missing, applies database migrations, starts the API and the web app, and opens the browser. `.\dev.cmd -Check` only runs the checks — use it first whenever something doesn't work.
+
+Needs: Python 3.12+, Node.js, `backend/.env` and `frontend-mockup/.env` (see section 12).
+
+### 👀 Demo logins
+
+The login page has **Try as Owner / Chef / Waiter** buttons that open a sample restaurant, "Saffron Junction", with live orders, low stock and four weeks of sales:
+
+| Role | Email | Password |
+|---|---|---|
+| Owner | `owner@rasoisaathi-demo.app` | `SaffronDemo@2026` |
+| Chef | `chef@rasoisaathi-demo.app` | `SaffronDemo@2026` |
+| Waiter | `waiter@rasoisaathi-demo.app` | `SaffronDemo@2026` |
+
+`dev.cmd` creates these logins the first time it runs. That requires Supabase → Authentication → Sign In / Providers → Email → **Confirm email** to be turned off. After that the API rebuilds the demo by itself every few hours (and each new day), so it always has live tickets and today's sales and visitors' changes don't pile up. To reset it right away, run `python seed_demo.py` in `backend/`. In the demo workspace, visitors can't change staff or outlets or send test WhatsApp messages, so it keeps working for the next person.
+
 ---
 
 ## 📑 Table of Contents
 1. [System Overview & Vision](#1-system-overview--vision)
-2. [Full Tech Stack & Dependencies](#2-full-tech-stack--dependencies)
+2. [System Architecture & Flow](#2-system-architecture--flow)
 3. [Multi-Tenant Database Architecture & Schemas](#3-multi-tenant-database-architecture--schemas)
 4. [Role-Based Access Control (RBAC) & Security Architecture](#4-role-based-access-control-rbac--security-architecture)
-5. [AI WhatsApp Ordering Bot (Twilio + Gemini 3.5 Flash Lite)](#5-ai-whatsapp-ordering-bot-twilio--gemini-35-flash-lite)
+5. [AI WhatsApp Ordering Bot (Twilio + Gemini)](#5-ai-whatsapp-ordering-bot-twilio--gemini)
 6. [Kitchen Display System (KDS) & Order Lifecycle](#6-kitchen-display-system-kds--order-lifecycle)
-7. [Automated Bill of Materials (BOM) & Inventory Auto-Depletion](#7-automated-bill-of-materials-bom--inventory-auto-depletion)
-8. [XGBoost ML Demand Forecasting & Stockout Prediction](#8-xgboost-ml-demand-forecasting--stockout-prediction)
-9. [RasoiSaathi AI Copilot (RAG + Function Calling)](#9-rasoisaathi-ai-copilot-rag--function-calling)
-10. [Comprehensive REST API Reference](#10-comprehensive-rest-api-reference)
-11. [Frontend Component Hierarchy & State Management](#11-frontend-component-hierarchy--state-management)
+7. [Recipe (BOM) Stock Deduction](#7-recipe-bom-stock-deduction)
+8. [Ingredient Forecasting & Reorder Alerts](#8-ingredient-forecasting--reorder-alerts)
+9. [RasoiSaathi AI Copilot](#9-rasoisaathi-ai-copilot-gemini-function-calling--policy-retrieval)
+10. [REST API Reference](#10-rest-api-reference)
+11. [Frontend Structure](#11-frontend-structure)
 12. [Installation, Seeding & Deployment Guide](#12-installation-seeding--deployment-guide)
+13. [Troubleshooting Login](#13-troubleshooting-login)
 
 ---
 
@@ -49,7 +68,7 @@ flowchart TD
     %% Section 2: Frontend & Gateways
     subgraph INGRESS ["💻 2. FRONTEND & MESSAGING"]
         direction LR
-        NextApp["💻 Next.js 14 Web App\n(Dashboard, Orders KDS, Menu, Inventory)"]
+        NextApp["💻 Next.js 16 Web App\n(Dashboard, Orders KDS, Menu, Inventory)"]
         TwilioWA["💬 Twilio WhatsApp Gateway\n(Receives WhatsApp Messages)"]
     end
 
@@ -112,7 +131,7 @@ flowchart TD
     end
 
     %% TIER 2: FRONTEND CLIENT LAYER
-    subgraph TIER2 ["💻 2. FRONTEND CLIENT LAYER (Next.js 14+ App Router)"]
+    subgraph TIER2 ["💻 2. FRONTEND CLIENT LAYER (Next.js 16 App Router)"]
         direction TB
         subgraph FE_MODULES ["Application Views & Modules"]
             direction LR
@@ -142,7 +161,7 @@ flowchart TD
     end
 
     %% TIER 4: BACKEND APPLICATION LAYER
-    subgraph TIER4 ["⚡ 4. BACKEND APPLICATION LAYER (FastAPI & Python 3.12)"]
+    subgraph TIER4 ["⚡ 4. BACKEND APPLICATION LAYER (FastAPI & Python 3.12+)"]
         direction TB
         Gateway["🌐 API Gateway, CORS Middleware & Global Exception Handler"]
         
@@ -254,7 +273,7 @@ sequenceDiagram
     Client->>FastAPI: GET /api/auth/me (Header: Authorization: Bearer <access_token>)
     
     Note over FastAPI,SupaJWKS: 3. JWT Verification (Stateless & Fast)
-    FastAPI->>SupaJWKS: Fetches / verifies RS256 public key (cached via lru_cache)
+    FastAPI->>SupaJWKS: Fetches the public signing key (RS256/ES256; HS256 projects use SUPABASE_JWT_SECRET)
     FastAPI->>FastAPI: Validates signature, expiry (exp), and audience (aud: "authenticated")
     FastAPI->>FastAPI: Extracts claims["sub"] = "user_uuid"
 
@@ -276,121 +295,82 @@ sequenceDiagram
    * Holds the operational role string: `owner`, `chef`, or `waiter`.
    * Holds account state: `is_active: bool`.
 3. **Stateless Verification**:
-   * The FastAPI backend never makes slow network calls to Supabase Auth on each request. Instead, it cryptographically validates the token's RS256 signature using Supabase's public JWKS certificates and queries the local PostgreSQL database for tenant scoping.
+   * The FastAPI backend never makes slow network calls to Supabase Auth on each request. Instead, it validates the token signature (asymmetric keys from Supabase's JWKS endpoint, or the legacy HS256 secret when `SUPABASE_JWT_SECRET` is set) and queries the local PostgreSQL database for tenant scoping.
 
 ### Dependency Stack
-* **Backend Framework**: `FastAPI 0.115+`, `Uvicorn 0.34+`, `Pydantic 2.10+`, `Pydantic-Settings`.
-* **Database & ORM**: `SQLAlchemy 2.0+` (Mapped columns), `asyncpg` / `psycopg2-binary`, `Alembic`.
-* **AI & Natural Language Processing**: `google-genai` (Gemini 3.5 Flash Lite with JSON mode & tool calling).
-* **Machine Learning**: `xgboost 2.1+`, `scikit-learn 1.6+`, `pandas 2.2+`, `numpy 2.2+`.
-* **Communication & Telephony**: `twilio 9.11+`, `python-multipart`.
-* **Frontend**: `Next.js 14.2+`, `React 18.3+`, `Tailwind CSS 3.4+`, `Lucide React 0.475+`, `@supabase/supabase-js 2.49+`.
+* **Backend**: FastAPI 0.141, Uvicorn, Pydantic 2 + pydantic-settings, SQLAlchemy 2.0 (typed `Mapped` columns) with **psycopg 3**, Alembic.
+* **Auth**: Supabase Auth; the API verifies access tokens with PyJWT (`PyJWT[crypto]`).
+* **AI**: `google-genai` (Gemini function calling for the Copilot, JSON mode for WhatsApp parsing, `gemini-embedding-001` for policy retrieval).
+* **Forecasting**: XGBoost 3.x, pandas, NumPy.
+* **Messaging**: Twilio (WhatsApp), `python-multipart`.
+* **Frontend**: Next.js 16 (App Router), React 19, Tailwind CSS 4, Recharts, Lucide icons, `@supabase/supabase-js` 2.
 
 ---
 
 ## 3. Multi-Tenant Database Architecture & Schemas
 
-The database design is architected around strict multi-tenancy where every operational record references a root `restaurant_id` UUID.
+Every operational record is scoped to a restaurant, directly (`restaurant_id`) or through its outlet (`branch_id` → `branches.restaurant_id`). Menus are restaurant-wide; stock, recipe ingredient lines, orders and forecasts belong to an outlet.
 
 ```mermaid
 erDiagram
-    restaurants ||--o{ branches : "has multiple"
+    restaurants ||--o{ branches : "has"
     restaurants ||--o{ users : "employs"
     restaurants ||--o{ menu_items : "offers"
-    restaurants ||--o{ inventory_items : "tracks"
     restaurants ||--o{ customers : "serves"
-    restaurants ||--o{ orders : "processes"
-
-    branches ||--o{ orders : "fulfills"
+    restaurants ||--o{ orders : "owns"
+    restaurants ||--o{ subscriptions : "subscribes"
+    branches ||--o{ inventory_items : "stocks"
+    branches ||--o{ orders : "fulfils"
     branches ||--o{ inventory_transactions : "logs"
-    branches ||--o{ demand_forecasts : "generates"
-
-    menu_items ||--o{ recipe_ingredients : "composed of"
-    inventory_items ||--o{ recipe_ingredients : "ingredient for"
-    inventory_items ||--o{ inventory_transactions : "audited in"
-
+    branches ||--o{ demand_forecasts : "forecasts"
+    branches ||--o{ purchase_orders : "buys"
+    menu_items ||--o{ menu_item_ingredients : "recipe"
+    inventory_items ||--o{ menu_item_ingredients : "used in"
     customers ||--o{ orders : "places"
     orders ||--o{ order_items : "contains"
-    menu_items ||--o{ order_items : "referenced by"
 ```
 
-### Table Schema Definitions
+| Table | Key columns |
+|---|---|
+| `restaurants` | `name`, `email`, `phone` |
+| `branches` (outlets) | `restaurant_id`, `address`, `phone`, `is_active`, `supports_dine_in / takeaway / delivery` |
+| `users` | `id` = Supabase Auth user id, `restaurant_id`, `email`, `name`, `role` (`owner` / `chef` / `waiter`), `is_active` |
+| `menu_items` | `restaurant_id`, `name`, `category`, `price`, `food_type` (`veg` / `non-veg`), `image_url`, `is_active` |
+| `menu_item_ingredients` | `menu_item_id`, `inventory_item_id`, `quantity_per_unit` — one line per outlet stock item |
+| `inventory_items` | `branch_id`, `name`, `unit`, `current_stock`, `safety_stock_level`, `reorder_delay_days`, `cost_per_unit`, `shelf_life_days` |
+| `inventory_transactions` | `inventory_item_id`, `branch_id`, `transaction_type` (`CONSUMPTION`, `PURCHASE`, `WASTE`, `ADJUSTMENT`), signed `quantity`, `unit_cost`, `reference_id` |
+| `customers` | `restaurant_id`, `phone` (unique per restaurant), `name` |
+| `orders` / `order_items` | `order_source` (`POS`, `WHATSAPP`, `SWIGGY`, `ZOMATO`), `order_type` (`DINE_IN`, `TAKEAWAY`, `DELIVERY`), `status`, `total_amount`, `ordered_at` |
+| `demand_forecasts`, `purchase_orders`, `restaurant_modules`, `subscriptions` | In the schema; not yet written by the app |
 
-#### 1. `restaurants`
-* `id` (`UUID`, PK) — Unique restaurant tenant ID.
-* `name` (`VARCHAR(150)`) — Brand name (e.g., "Saffron Junction").
-* `gstin` (`VARCHAR(15)`, Nullable) — Indian GST tax number.
-* `currency` (`VARCHAR(10)`, Default `"INR"`) — ISO currency code.
-* `settings` (`JSONB`, Default `{}`) — Configuration flags (tax rates, order defaults).
-* `created_at`, `updated_at` (`TIMESTAMPTZ`).
-
-#### 2. `branches`
-* `id` (`UUID`, PK) — Physical branch / cloud kitchen ID.
-* `restaurant_id` (`UUID`, FK `restaurants.id`) — Tenant link.
-* `name` (`VARCHAR(120)`) — Branch name (e.g., "Central Kitchen - Bandra").
-* `city` (`VARCHAR(80)`), `state` (`VARCHAR(80)`), `pincode` (`VARCHAR(10)`).
-* `is_active` (`BOOLEAN`, Default `true`).
-
-#### 3. `users`
-* `id` (`UUID`, PK) — References Supabase Auth user UUID.
-* `restaurant_id` (`UUID`, FK `restaurants.id`) — Tenant link.
-* `email` (`VARCHAR(255)`, Unique) — Login email.
-* `name` (`VARCHAR(120)`) — Full name.
-* `role` (`VARCHAR(30)`) — Access role: `owner`, `chef`, or `waiter`.
-* `is_active` (`BOOLEAN`, Default `true`).
-
-#### 4. `menu_items` & `recipe_ingredients`
-* **`menu_items`**: `id`, `restaurant_id`, `name`, `category` (`MAINS`, `STARTERS`, `BEVERAGES`, `DESSERTS`), `price` (`NUMERIC(10,2)`), `food_type` (`veg` / `non-veg`), `is_active`.
-* **`recipe_ingredients`** (Bill of Materials):
-  * `id` (`UUID`, PK).
-  * `menu_item_id` (`UUID`, FK `menu_items.id`).
-  * `inventory_item_id` (`UUID`, FK `inventory_items.id`).
-  * `quantity_per_unit` (`NUMERIC(10,4)`) — Exact raw stock consumed per single dish prepared.
-
-#### 5. `inventory_items` & `inventory_transactions`
-* **`inventory_items`**: `id`, `restaurant_id`, `branch_id`, `name`, `unit` (`kg`, `ltr`, `pcs`, `grams`), `current_stock`, `min_threshold`, `cost_per_unit`.
-* **`inventory_transactions`**: `id`, `inventory_item_id`, `branch_id`, `transaction_type` (`CONSUMPTION`, `PURCHASE`, `WASTAGE`, `ADJUSTMENT`), `quantity` (signed `NUMERIC`), `unit_cost`, `reference_id` (Order ID or PO number).
-
-#### 6. `customers`
-* `id` (`UUID`, PK).
-* `restaurant_id` (`UUID`, FK `restaurants.id`).
-* `phone` (`VARCHAR(20)`) — Customer phone number (Unique per restaurant).
-* `name` (`VARCHAR(150)`), `preferred_language` (`VARCHAR(10)`).
-
-#### 7. `orders` & `order_items`
-* **`orders`**: `id`, `restaurant_id`, `branch_id`, `customer_id`, `order_source` (`POS`, `WHATSAPP`, `SWIGGY`, `ZOMATO`), `order_type` (`DINE_IN`, `DELIVERY`, `TAKEAWAY`), `status` (`PENDING`, `PREPARING`, `READY`, `COMPLETED`, `CANCELLED`), `total_amount`, `ordered_at`.
-* **`order_items`**: `id`, `order_id`, `menu_item_id`, `quantity`, `unit_price`, `total_price`.
+Schema changes go through Alembic (`backend/alembic/versions`).
 
 ---
 
 ## 4. Role-Based Access Control (RBAC) & Security Architecture
 
-### Permission Matrix & Screen Scoping
-
-| Module / Route | 👑 Owner | 🍳 Chef | 🛎️ Waiter |
+| Area | 👑 Owner | 🍳 Chef | 🛎️ Waiter |
 |---|:---:|:---:|:---:|
-| **Executive Dashboard** (`/dashboard`) | ✅ Full Access | ❌ Blocked | ❌ Blocked |
-| **Kitchen Display Queue** (`/orders`) | ✅ Full Access | ✅ Primary Screen | ❌ Blocked |
-| **Waiter POS Terminal** (`/waiter-orders`) | ✅ Full Access | ❌ Blocked | ✅ Primary Screen |
-| **Menu & Recipes** (`/menu`) | ✅ Full Access | ✅ Read/Edit | ❌ Blocked |
-| **Inventory & Purchasing** (`/inventory`) | ✅ Full Access | ❌ Blocked | ❌ Blocked |
-| **Sales & Channel Analytics** (`/analytics`) | ✅ Full Access | ❌ Blocked | ❌ Blocked |
-| **RasoiSaathi AI Copilot** (`/copilot`) | ✅ Full Access | ❌ Blocked | ❌ Blocked |
-| **Staff & Roles Management** (`/settings/staff`) | ✅ Full Access | ❌ Blocked | ❌ Blocked |
-| **Restaurant & Outlets** (`/settings/outlets`) | ✅ Full Access | ❌ Blocked | ❌ Blocked |
+| Dashboard, Analytics, AI Copilot | ✅ | ❌ | ❌ |
+| Live Orders (KDS) | ✅ | ✅ | ❌ |
+| Waiter POS | ✅ | ❌ | ✅ |
+| Menu & recipes | ✅ (incl. delete) | ✅ (no delete) | ❌ |
+| Inventory changes & reorder forecast | ✅ | read-only (for recipes) | ❌ |
+| Outlets, Staff, Subscription | ✅ | ❌ | ❌ |
 
-### Implementation Details:
-* **Backend Security**: FastAPI dependency injection `require_roles("owner")`, `require_roles("owner", "chef")` verifies claims extracted from validated Supabase JWTs.
-* **Frontend Security**: [`ProtectedDashboard.js`](file:///c:/Users/SAMBODHI/Desktop/rasoi-sathi/frontend%20mockup/src/components/dashboard/ProtectedDashboard.js) inspects `applicationUser.role`. If a Waiter accesses any unauthorized route, they are automatically redirected to `/waiter-orders`; Chefs are auto-redirected to `/orders`.
+* **Enforced by the API**: every route uses `get_current_user` or `require_roles(...)`; the restaurant always comes from the signed-in user's profile, never from the request.
+* **Order status rules** (`backend/app/services/order_rules.py`): chefs move tickets to `CONFIRMED` / `PREPARING` / `READY` / `CANCELLED`; waiters complete `READY` orders after payment; completed and cancelled orders are final.
+* **Staff logins** are created from the owner's browser with a separate, non-persisting Supabase client (so the owner stays signed in) and linked with `POST /api/staff`. The API refuses to link an account that already belongs to another restaurant.
+* **The UI** (`frontend-mockup/src/components/dashboard/ProtectedDashboard.js`) mirrors these rules and sends each role to its home screen.
 
 ---
 
-## 5. AI WhatsApp Ordering Bot (Twilio + Gemini 3.5 Flash Lite)
+## 5. AI WhatsApp Ordering Bot (Twilio + Gemini)
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Customer as 📱 WhatsApp Customer (+917866053115)
+    actor Customer as 📱 WhatsApp Customer
     participant Twilio as 💬 Twilio WhatsApp Gateway
     participant Backend as ⚡ FastAPI Backend (/api/whatsapp/webhook)
     participant Gemini as ✨ Gemini 3.5 Flash Lite
@@ -412,177 +392,155 @@ sequenceDiagram
     Twilio-->>Customer: Order Ticket Confirmation
 
     Note over DB,Chef: Real-Time Ticket on KDS
-    Chef->>DB: Updates ticket status PENDING -> PREPARING -> READY
-    DB->>Backend: Triggers status change hook
+    Chef->>Backend: PATCH /api/orders/{id} PENDING -> PREPARING -> READY
+    Backend->>DB: Deduct this outlet's recipe stock (once)
     Backend->>Twilio: twilio_client.messages.create(to=customer_phone, body="🎉 Hot & Ready!")
     Twilio-->>Customer: "🎉 Saffron Junction Update: Your order #e1c6046a is HOT & READY! 🍽️"
 ```
 
-### Key Components:
-1. **Inbound Webhook (`POST /api/whatsapp/webhook`)**: Receives `application/x-www-form-urlencoded` payloads from Twilio, handles sender phone normalization, and returns instant TwiML XML.
-2. **Conversational State Engine (`backend/app/services/whatsapp_bot.py`)**:
-   * Tracks customer session and active restaurant selection in-memory.
-   * Delivers formatted menus with visual food type pills (🟢 Veg, 🔴 Non-Veg) and prices.
-3. **Gemini Extraction**: Converts unstructured Hindi/English text into validated `order_items` JSON referencing database `menu_item_id`s.
-4. **Outbound Push Notifications**: When Chef changes order status to `"READY"`, `send_whatsapp_order_ready_notification()` dispatches a personalized ready alert to the customer.
+* **Webhook** `POST /api/whatsapp/webhook` verifies Twilio's `X-Twilio-Signature` (set `TWILIO_AUTH_TOKEN`; behind a tunnel, set `TWILIO_WEBHOOK_URL` to the URL configured in Twilio) and replies with TwiML.
+* **Restaurant selection**: the shared number serves every restaurant. A customer picks one by naming it; returning customers go to their last restaurant; with several restaurants and no choice yet, the bot asks.
+* **Parsing**: greetings and "menu" return the menu; anything else goes to Gemini, whose output is validated against the live menu (prices always come from the database, quantities are capped).
+* **Ready alerts**: when the kitchen marks an order `READY`, the customer gets a WhatsApp message.
+* **Testing without Twilio**: `POST /api/whatsapp/simulate` (owner login required) runs the bot against your own restaurant.
+* **Without Gemini**: if `GEMINI_API_KEY` is missing or Gemini fails, a built-in parser still understands orders such as "2 chicken biryani and a lassi for delivery" (Hinglish numbers like *ek/do/teen* too), and never turns questions like "is the biryani spicy?" into orders.
 
 ---
 
 ## 6. Kitchen Display System (KDS) & Order Lifecycle
 
-Located in [`frontend mockup/src/app/(dashboard)/orders/page.js`](file:///c:/Users/SAMBODHI/Desktop/rasoi-sathi/frontend%20mockup/src/app/%28dashboard%29/orders/page.js):
+`frontend-mockup/src/app/(dashboard)/orders/page.js` shows the selected outlet's last 24 hours of tickets and refreshes every 10 seconds.
 
-### Lifecycle States:
-1. **`PENDING`** (Amber badge): Incoming order newly created via POS or WhatsApp.
-2. **`PREPARING`** (Blue badge): Chef has accepted the order and started food preparation.
-3. **`READY`** (Emerald badge): Food is cooked and packaged. Triggers the outbound WhatsApp notification to the customer.
-4. **`COMPLETED`** (Slate badge): Order picked up or delivered. **Triggers automated recipe ingredient inventory deduction**.
-5. **`CANCELLED`** (Rose badge): Order voided.
+`PENDING` → (`CONFIRMED`) → `PREPARING` → `READY` → `COMPLETED`, or `CANCELLED` before completion.
 
 ---
 
-## 7. Automated Bill of Materials (BOM) & Inventory Auto-Depletion
+## 7. Recipe (BOM) Stock Deduction
 
-When an order transitions to `COMPLETED` or `READY`, the backend automatically calculates raw ingredient consumption across all line items:
+When an order first becomes **`READY`**, each dish's recipe lines **for that order's outlet** are multiplied by the quantity and deducted from that outlet's stock, with one `CONSUMPTION` transaction per ingredient (`reference_id` = order id).
 
-$$\text{Total Consumption}(i) = \sum_{j \in \text{Order Items}} \text{Quantity}_j \times \text{BOM Quantity}(i, j)$$
-
-### Safety & Concurrency:
-* Uses SQLAlchemy `with_for_update()` row-level locks on `inventory_items` to prevent race conditions during peak hours.
-* Validates sufficient stock before decrementing.
-* Inserts an audit log into `inventory_transactions` with `transaction_type="CONSUMPTION"` and `reference_id=order.id`.
-
----
-
-## 8. XGBoost ML Demand Forecasting & Stockout Prediction
-
-Located in `backend/app/ml/forecaster.py`:
-
-### Machine Learning Pipeline:
-1. **Feature Engineering**:
-   * Day of week (0–6), month, day of month.
-   * Rolling 7-day and 14-day dish sales moving averages.
-   * Channel distribution weights (POS, WhatsApp, Swiggy, Zomato).
-2. **Model Training**:
-   * `XGBRegressor(n_estimators=100, learning_rate=0.08, max_depth=5)`.
-   * Predicts daily sales velocity per menu item for a 7-day forward horizon.
-3. **Ingredient Explosion**:
-   * Maps predicted dish demand back to raw ingredient BOM quantities.
-4. **Reorder Alert Formula**:
-   $$\text{Runout Days} = \frac{\text{Current Stock}}{\text{Predicted Daily Burn Rate}}$$
-   If $\text{Runout Days} \le 2.0$ or $\text{Current Stock} < \text{Min Threshold}$, a high-priority reorder alert is generated.
+* Rows are locked (`SELECT … FOR UPDATE`) in a fixed order to avoid deadlocks, and re-read under the lock.
+* Deduction happens once per order, even if a ticket goes back to `PREPARING` and is marked ready again.
+* If recorded stock is lower than the recipe needs, the kitchen is **not** blocked: stock is floored at zero and the response includes `inventory_warnings` so someone can recount.
+* Every other stock change is logged too: **Stock received** (`PURCHASE`, optionally updating the cost price), **Wastage** (`WASTE`, shown in Analytics), and manual count edits (`ADJUSTMENT`).
+* Removing an ingredient that has stock history **archives** it (hidden, history kept); unused ingredients are deleted.
 
 ---
 
-## 9. RasoiSaathi AI Copilot (RAG + Function Calling)
+## 8. Ingredient Forecasting & Reorder Alerts
 
-Located in [`backend/app/services/copilot.py`](file:///c:/Users/SAMBODHI/Desktop/rasoi-sathi/backend/app/services/copilot.py):
+`backend/app/ml/forecaster.py`, exposed at `GET /api/inventory/reorder-alerts` and the Inventory page's **What to Buy** list.
 
-### Available Tools / Function Declarations:
-* `get_daily_revenue(days: int)`: Queries PostgreSQL for aggregate revenue and order counts.
-* `source_performance(days: int)`: Compares channel performance (POS vs WhatsApp vs Swiggy vs Zomato).
-* `stock_status()`: Scans inventory for low stock and imminent stockouts.
-* `top_selling_dishes(limit: int)`: Ranks dishes by total units sold and revenue contribution.
+1. **Daily usage**: completed orders from the last 90 days × this outlet's recipe lines, grouped by local business day (`BUSINESS_TIMEZONE`), with zero-usage days filled in and today's partial day excluded.
+2. **Forecast** (each alert says which method was used):
+   * `xgboost_calibrated`: the bundled model (`model.json`, 300 trees, trained on another restaurant's data for 34 ingredient categories) provides the day-to-day pattern; the projection is rescaled to this outlet's own average usage over the last 28 days.
+   * `moving_average`: the recent daily average, for ingredient names the model doesn't know.
+   * `no_history`: no recent usage; only stock vs safety level is checked.
+3. **Reorder plan**: projected stock is compared with the safety level to find the breach date; the order-by date subtracts the supplier lead time; the suggested quantity covers a 14-day par level (shortened for short shelf life).
 
----
-
-## 10. Comprehensive REST API Reference
-
-### 🔐 Authentication & Onboarding
-* `GET /api/auth/me`
-  * **Headers**: `Authorization: Bearer <supabase_jwt>`
-  * **Response**: `{ id, email, name, role, restaurant_id, restaurant_name }`
-* `POST /api/auth/onboarding`
-  * **Payload**: `{ name, email, restaurant_name, phone }`
-  * **Action**: Creates `Restaurant`, initial `Branch`, and sets user `role="owner"`.
-
-### 👥 Staff & Team Management
-* `GET /api/staff` — List all staff members for the owner's restaurant (`require_roles("owner")`).
-* `POST /api/staff` — Create staff user (`name`, `email`, `role`: `chef` | `waiter`).
-* `PATCH /api/staff/{id}` — Toggle active status (`is_active: bool`) or change role.
-* `DELETE /api/staff/{id}` — Remove staff member.
-
-### 🍽️ Orders & Kitchen KDS
-* `GET /api/orders?branch_id={uuid}&status={status}` — List orders with line items and customer data.
-* `POST /api/orders` — Create new order (POS / Floor terminal).
-* `PATCH /api/orders/{id}` — Update status (`PENDING` $\to$ `PREPARING` $\to$ `READY` $\to$ `COMPLETED`). Triggers WhatsApp notification on `READY`.
-
-### 📦 Inventory & Menu
-* `GET /api/menu` — List menu items with categories and prices.
-* `GET /api/inventory` — List branch inventory items, current stock, and thresholds.
-* `GET /api/forecasts/reorder-alerts` — Get XGBoost-predicted reorder suggestions.
-
-### 💬 WhatsApp Webhook
-* `POST /api/whatsapp/webhook` — Twilio inbound message endpoint.
-* `POST /api/whatsapp/simulate` — In-dashboard testing simulation endpoint.
+There is no training pipeline in this repository; retraining the model on your own data would need one.
 
 ---
 
-## 11. Frontend Component Hierarchy & State Management
+## 9. RasoiSaathi AI Copilot (Gemini Function Calling + Policy Retrieval)
+
+`backend/app/services/copilot.py` — owner-only, read-only, scoped to the owner's restaurant (and the selected outlet). The chat sends recent turns so follow-up questions keep context.
+
+Tools: `get_dish_sales`, `get_dish_profit`, `simulate_price_change`, `calculate_break_even`, `compare_branches`, `sales_trends`, `dish_performance`, `source_performance`, `low_stock`, `forecast` (dish demand from same-weekday averages), `reorder_suggestions` (same engine as the Inventory page).
+
+Profit figures are **gross** (recipe food cost and aggregator commission); rent, salaries and other operating costs are not tracked.
+
+---
+
+## 10. REST API Reference
+
+All routes except `/health` and the Twilio webhook need `Authorization: Bearer <Supabase access token>`.
+
+| Method & path | Who | Purpose |
+|---|---|---|
+| `GET /api/auth/me` | any | Current profile. `404 {code: profile_missing}` → run onboarding; `403 {code: account_inactive}` |
+| `POST /api/auth/onboarding` | signed in, no profile | Create restaurant, owner profile and first outlet |
+| `GET /api/branches` · `POST` · `PATCH /api/branches/{id}` | any · owner · owner | Outlets |
+| `GET /api/menu-items?branch_id=` · `POST` · `PATCH /{id}` · `DELETE /{id}` | any · owner/chef · owner/chef · owner | Menu with that outlet's recipe lines |
+| `GET /api/inventory-items?branch_id=` · `POST` · `PATCH /{id}` · `DELETE /{id}` | any · owner | Stock (delete archives items with history) |
+| `POST /api/inventory-items/{id}/movements` | owner | Record stock received (`PURCHASE`) or wastage (`WASTE`) |
+| `GET /api/orders?branch_id=&status=&since=&limit=` · `POST` · `PATCH /{id}` | any · any · role rules | Orders and status changes |
+| `GET /api/inventory/reorder-alerts?branch_id=&horizon_days=` | owner | Forecast-based reorder list |
+| `GET /api/dashboard/summary` · `GET /api/analytics/summary?days=&branch_id=` | owner | Reporting (completed orders, local business days) |
+| `GET /api/staff` · `POST` · `PATCH /{id}` · `DELETE /{id}` | owner | Staff profiles |
+| `GET /api/modules` · `GET /api/subscriptions` · `PUT /api/subscriptions` | any · owner · owner | Module catalog and the restaurant's plan (online payment not connected) |
+| `POST /api/copilot/chat` | owner | AI Copilot |
+| `POST /api/whatsapp/webhook` · `POST /api/whatsapp/simulate` | Twilio (signed) · owner | WhatsApp bot |
+
+---
+
+## 11. Frontend Structure
 
 ```
-frontend mockup/src/
+frontend-mockup/src/
 ├── app/
-│   ├── (dashboard)/
-│   │   ├── layout.js              # Topbar + Sidebar + ProtectedDashboard wrapper
-│   │   ├── dashboard/page.js      # Executive Summary, KPIs & Recent Orders
-│   │   ├── orders/page.js         # Kitchen Display System (KDS) Live Queue
-│   │   ├── waiter-orders/page.js  # Floor Waiter POS Terminal
-│   │   ├── menu/page.js           # Menu & Recipe Ingredients Management
-│   │   ├── inventory/page.js      # Stock Levels, BOM & Reorder Alerts
-│   │   ├── analytics/page.js      # Revenue Charts & Channel Performance
-│   │   ├── copilot/page.js        # AI Copilot Conversational Assistant
-│   │   └── settings/
-│   │       ├── outlets/page.js    # Multi-Branch & Outlet Settings
-│   │       └── staff/page.js      # Staff Directory & Role Provisioning
-│   ├── login/page.js              # Supabase Auth Login with Role Auto-Redirect
-│   └── signup/page.js             # Restaurant Onboarding Registration
-├── components/
-│   └── dashboard/
-│       ├── ProtectedDashboard.js  # RBAC Route Guard & Redirection
-│       ├── Sidebar.js             # Role-Filtered Navigation Sidebar
-│       ├── Topbar.js              # User Avatar, Active Role Badge & Branch Selector
-│       └── OutletSwitcher.js      # Multi-Outlet Dynamic Switcher
-└── context/
-    ├── AuthContext.js             # Supabase Session & Database User Claims
-    └── OutletContext.js           # Active Branch Selection & State
+│   ├── (dashboard)/            # Sidebar + Topbar + ProtectedDashboard
+│   │   ├── dashboard/  orders/  waiter-orders/  menu/  inventory/  analytics/  copilot/
+│   │   └── settings/  outlets/  staff/  subscription/
+│   ├── login/  signup/  forgot-password/  reset-password/  complete-setup/
+│   └── page.js                 # Landing page
+├── components/dashboard/        # ProtectedDashboard, Sidebar, Topbar, OutletSwitcher, NotificationBell, ...
+├── context/
+│   ├── AuthContext.js           # Supabase session + API profile, sign-in / sign-up / onboarding
+│   └── OutletContext.js         # Outlets and the selected outlet (remembered per browser)
+├── lib/                         # Supabase client, order status rules, dish images
+└── services/api.js              # Backend client (attaches the current token, readable errors)
 ```
 
 ---
 
 ## 12. Installation, Seeding & Deployment Guide
 
-### 1. Backend Setup
+The quickest way is **`dev.cmd`** (see Quick Start). Manual steps:
+
+### 1. Backend
 ```bash
 cd backend
 python -m venv venv
-venv\Scripts\activate            # On Windows (or source venv/bin/activate on Linux/Mac)
+venv\Scripts\activate            # Windows (source venv/bin/activate on Linux/Mac)
 pip install -r requirements.txt
+copy .env.example .env           # then fill in DATABASE_URL, SUPABASE_URL, GEMINI_API_KEY, Twilio keys
 
-# Run database migrations
-alembic upgrade head
-
-# Seed demo restaurant (Saffron Junction), menu, inventory, and users
-python seed_demo.py
-
-# Launch FastAPI development server
+python migrate.py                # create / update tables (on Supabase this also sets up the menu-images photo bucket)
+python seed_demo.py              # demo restaurant "Saffron Junction" + demo logins (re-run any time to reset it)
 uvicorn app.main:app --reload --port 8000
+pytest                           # API, auth, forecasting and WhatsApp tests on an in-memory database
 ```
 
-### 2. Frontend Setup
+### 2. Frontend
 ```bash
-cd "frontend mockup"
+cd frontend-mockup
 npm install
+# .env needs NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY
+# (and NEXT_PUBLIC_API_URL if the backend isn't on http://127.0.0.1:8000)
 npm run dev
 ```
+In Supabase → Authentication → URL Configuration, add `http://localhost:3000/reset-password` (and your deployed URL) to the redirect URLs so password-reset links work.
 
-### 3. Connecting Live WhatsApp Webhook (Twilio Sandbox)
-1. In your terminal, expose port 8000 via SSH:
-   ```bash
-   ssh -R 80:127.0.0.1:8000 nokey@localhost.run
-   ```
-2. Copy the generated `https://xxxx.lhr.life` URL.
-3. In Twilio Console $\to$ **WhatsApp sandbox settings** $\to$ **"WHEN A MESSAGE COMES IN"**:
-   * Method: `HTTP POST`
-   * URL: `https://xxxx.lhr.life/api/whatsapp/webhook`
-4. Click **Save** and start texting from your phone!
+### 3. Live WhatsApp webhook (Twilio sandbox)
+1. Expose port 8000, e.g. `ssh -R 80:127.0.0.1:8000 nokey@localhost.run`.
+2. In Twilio → WhatsApp sandbox settings → "When a message comes in": `POST https://<tunnel>/api/whatsapp/webhook`.
+3. Put the same URL in `TWILIO_WEBHOOK_URL` if signature checks fail behind the tunnel.
+
+---
+
+## 13. Troubleshooting Login
+
+Run **`.\dev.cmd -Check`** first — it tests all of the below and prints the fix.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| "Can't reach Supabase (…)" on the login page | The Supabase project is paused or deleted (free projects pause after about a week idle), or no internet | Restore the project in the Supabase dashboard, or create a new one and update both `.env` files |
+| "Can't reach the Rasoi Saathi server at http://127.0.0.1:8000" | Backend not running | `cd backend` then `uvicorn app.main:app --reload --port 8000` |
+| Frontend opens on port 3001/3002 | Another app already uses port 3000 | Fine — the API accepts any localhost port. Open the URL `npm run dev` prints |
+| "The server cannot verify logins yet: SUPABASE_JWT_SECRET is not configured" | The project signs tokens with the legacy HS256 secret | Copy the JWT secret from Supabase → Project Settings → API into `backend/.env` |
+| "The server could not reach Supabase to verify your login" | The backend can't reach `SUPABASE_URL` | Check `SUPABASE_URL` and that the project is active |
+| Sent to "Finish setting up your workspace" | Login works but no restaurant profile exists yet | Fill in the form; it creates the restaurant, owner profile and first outlet |
+| Dish photo upload fails with "Bucket not found" | Photo storage not set up | Run `python migrate.py` in `backend/` (or `supabase/menu-images.sql` in the Supabase SQL editor) |
+| No "Try as Owner / Chef / Waiter" buttons on the login page | Demo logins not created yet — usually because Supabase "Confirm email" is still on | Turn it off (Authentication → Sign In / Providers → Email), then run `python seed_demo.py` in `backend/` |
+| New sign-ups or staff logins say "Email not confirmed" | Supabase "Confirm email" is on | Turn it off as above, or click the link in the confirmation email |

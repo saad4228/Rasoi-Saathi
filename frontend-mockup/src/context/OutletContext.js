@@ -1,72 +1,77 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { apiRequest } from "@/services/api";
 
 const OutletContext = createContext(null);
+const STORAGE_KEY = "rasoisaathi-active-outlet";
+
+function readStoredOutlet() {
+  if (typeof window === "undefined") return null;
+  try {
+    return localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
 
 export function OutletProvider({ children }) {
-  const { session, applicationUser } = useAuth();
-  const [outletList, setOutletList] = useState([]);
-  const [activeOutletId, setActiveOutletId] = useState(null);
+  const { applicationUser } = useAuth();
+  const userId = applicationUser?.id ?? null;
+  // `loadedFor` tells us which user the list belongs to, so "loading" is derived instead of set in the effect.
+  const [state, setState] = useState({ loadedFor: null, outlets: [], error: null });
+  const [selectedId, setSelectedId] = useState(readStoredOutlet);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    if (!session) return;
-
-    apiRequest("/api/branches", {}, session)
+    if (!userId) return undefined;
+    let cancelled = false;
+    apiRequest("/api/branches")
       .then((branches) => {
-        if (Array.isArray(branches) && branches.length > 0) {
-          const restaurantName =
-            applicationUser?.restaurant_name ||
-            branches[0]?.restaurant_name ||
-            applicationUser?.name ||
-            "Saffron Junction";
-
-          const formatted = branches.map((b, idx) => ({
-            id: b.id,
-            name: restaurantName,
-            area: b.address || `Branch ${idx + 1}`,
-            isPrimary: idx === 0,
-            status: b.is_active ? "Active" : "Inactive",
-            address: b.address || "Main Branch",
-            phone: b.phone || "",
-            cuisine: "North Indian, Chinese",
-            openTime: "11:00 AM",
-            closeTime: "11:00 PM",
-            gst: "27ABCDE1234F1Z5",
-            fssai: "12345678901234",
-          }));
-
-          setOutletList(formatted);
-          setActiveOutletId(formatted[0].id);
-        }
+        if (!cancelled) setState({ loadedFor: userId, outlets: Array.isArray(branches) ? branches : [], error: null });
       })
-      .catch(() => {});
-  }, [session, applicationUser]);
-
-  const activeOutlet =
-    outletList.find((o) => o.id === activeOutletId) ||
-    outletList[0] || {
-      id: "default",
-      name: applicationUser?.restaurant_name || applicationUser?.name || "Saffron Junction",
-      area: "Main Kitchen",
-      isPrimary: true,
-      status: "Active",
-      address: "Main Branch",
+      .catch((error) => {
+        if (!cancelled) setState((previous) => ({ ...previous, loadedFor: userId, error }));
+      });
+    return () => {
+      cancelled = true;
     };
+  }, [userId, reloadKey]);
+
+  const outlets = state.loadedFor === userId ? state.outlets : [];
+  const loaded = Boolean(userId) && state.loadedFor === userId;
+
+  // Keep the user's choice if it still exists; otherwise fall back to the first active outlet.
+  const activeOutlet =
+    outlets.find((outlet) => outlet.id === selectedId) ||
+    outlets.find((outlet) => outlet.is_active) ||
+    outlets[0] ||
+    null;
+
+  const setActiveOutletId = useCallback((id) => {
+    setSelectedId(id);
+    try {
+      localStorage.setItem(STORAGE_KEY, id);
+    } catch {
+      /* not persisted; still works for this session */
+    }
+  }, []);
+
+  const refreshOutlets = useCallback(() => setReloadKey((key) => key + 1), []);
 
   const value = {
-    outlets: outletList,
-    setOutlets: setOutletList,
-    activeOutletId: activeOutlet?.id,
-    setActiveOutletId,
+    outlets,
+    outletsLoaded: loaded,
+    outletsError: state.loadedFor === userId ? state.error : null,
     activeOutlet,
+    activeOutletId: activeOutlet?.id ?? null,
+    setActiveOutletId,
+    refreshOutlets,
+    restaurantName: applicationUser?.restaurant_name || outlets[0]?.restaurant_name || "",
   };
 
-  return (
-    <OutletContext.Provider value={value}>{children}</OutletContext.Provider>
-  );
+  return <OutletContext.Provider value={value}>{children}</OutletContext.Provider>;
 }
 
 export function useOutlets() {
