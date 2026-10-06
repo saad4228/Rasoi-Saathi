@@ -2,13 +2,52 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { ChefHat, Crown, UtensilsCrossed } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { supabaseConfigured } from "@/lib/supabase";
 import { apiRequest } from "@/services/api";
 
 const HOME_FOR_ROLE = { waiter: "/waiter-orders", chef: "/orders", owner: "/dashboard" };
+// The demo logins come from the API, which is a round trip away. Remembering the last answer
+// lets the "Try as ..." buttons render with the rest of the page instead of appearing a second
+// or more later; the API answer then replaces it on every visit.
+const DEMO_CACHE_KEY = "rasoisaathi-demo-logins";
+
+// Read once per page load and reused, because useSyncExternalStore needs a stable snapshot.
+let remembered;
+
+function rememberedDemo() {
+  if (remembered === undefined) {
+    try {
+      const stored = JSON.parse(localStorage.getItem(DEMO_CACHE_KEY) || "null");
+      remembered = stored?.available && stored.accounts?.length ? stored : null;
+    } catch {
+      remembered = null; // storage blocked (private window): wait for the API instead
+    }
+  }
+  return remembered;
+}
+
+function writeCachedDemo(data) {
+  remembered = data;
+  try {
+    if (data) localStorage.setItem(DEMO_CACHE_KEY, JSON.stringify(data));
+    else localStorage.removeItem(DEMO_CACHE_KEY);
+  } catch {
+    /* nothing to do: the buttons still work, they just won't be instant next time */
+  }
+}
+
+// The server has no localStorage, so it renders without the buttons and this hook fills them in
+// as hydration finishes. Same approach as useTheme in @/lib/theme.
+const noSubscribe = () => () => {};
+const noServerSnapshot = () => null;
+
+function useRememberedDemo() {
+  return useSyncExternalStore(noSubscribe, rememberedDemo, noServerSnapshot);
+}
+
 const DEMO_ROLES = {
   owner: { label: "Owner", hint: "Dashboard, analytics, stock, AI Copilot", Icon: Crown },
   chef: { label: "Chef", hint: "Live kitchen tickets and recipes", Icon: ChefHat },
@@ -21,7 +60,10 @@ export default function LoginPage() {
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState(supabaseConfigured ? "" : "Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to frontend-mockup/.env and restart the dev server.");
   const [busy, setBusy] = useState(null); // "form" or a demo role while signing in
-  const [demo, setDemo] = useState(null);
+  // undefined until the API answers; null once it says there is no demo workspace.
+  const [fetchedDemo, setFetchedDemo] = useState(undefined);
+  const lastVisitsDemo = useRememberedDemo();
+  const demo = fetchedDemo === undefined ? lastVisitsDemo : fetchedDemo;
 
   // Already signed in: go straight to this role's home screen.
   useEffect(() => {
@@ -30,14 +72,20 @@ export default function LoginPage() {
     else if (profileError?.code === "profile_missing") router.replace("/complete-setup");
   }, [loading, session, applicationUser, profileError, router]);
 
-  // The demo logins exist only once `python seed_demo.py` has run.
+  // The demo logins exist only once `python seed_demo.py` has run. The buttons are already on
+  // screen from the last visit, so this only confirms them.
   useEffect(() => {
     let cancelled = false;
     apiRequest("/api/demo/accounts", {}, null)
       .then((data) => {
-        if (!cancelled && data?.available) setDemo(data);
+        if (cancelled) return;
+        const available = data?.available ? data : null;
+        setFetchedDemo(available);
+        writeCachedDemo(available);
       })
-      .catch(() => {});
+      .catch(() => {
+        /* Unreachable API: keep showing what we remembered rather than hiding the buttons. */
+      });
     return () => {
       cancelled = true;
     };

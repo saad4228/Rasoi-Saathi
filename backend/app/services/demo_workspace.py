@@ -1,7 +1,7 @@
 """Builds the public demo workspace ("Saffron Junction") and keeps it fresh.
 
 `seed_demo.py` creates the demo logins in Supabase and calls `build_demo` the first time. After
-that the API rebuilds the data by itself (`refresh_demo_in_background`, started when the login
+that the API rebuilds the data by itself (`start_demo_refresh`, started when the login
 page asks for the demo accounts), so "today" never goes empty and visitors' changes don't pile up.
 """
 from __future__ import annotations
@@ -213,12 +213,17 @@ def build_demo(db: Session, login_ids: dict[str, UUID], module_ids: list[UUID]) 
 
 # ─── Keeping it fresh ─────────────────────────────────────────────────────────
 
+def built_at_is_stale(built_at: datetime) -> bool:
+    """True when demo data built at `built_at` is from an earlier local day or too old to still look live."""
+    built_at = built_at if built_at.tzinfo else built_at.replace(tzinfo=timezone.utc)
+    return local_date(built_at) != local_today() or datetime.now(timezone.utc) - built_at > DEMO_REFRESH_AFTER
+
+
 def demo_is_stale(db: Session) -> bool:
     built_at = db.scalar(select(Restaurant.created_at).where(Restaurant.id == DEMO_RESTAURANT_ID))
     if built_at is None:
         return False  # no demo yet: seed_demo.py creates it
-    built_at = built_at if built_at.tzinfo else built_at.replace(tzinfo=timezone.utc)
-    return local_date(built_at) != local_today() or datetime.now(timezone.utc) - built_at > DEMO_REFRESH_AFTER
+    return built_at_is_stale(built_at)
 
 
 def demo_login_ids(db: Session) -> dict[str, UUID] | None:
@@ -257,6 +262,33 @@ def refresh_demo_if_stale(db: Session) -> bool:
 
 
 def refresh_demo_in_background(bind: Engine) -> None:
-    """For BackgroundTasks: the request's own session is closed by the time this runs."""
+    """Runs outside the request, so it opens a session of its own."""
     with Session(bind=bind, autoflush=False) as db:
         refresh_demo_if_stale(db)
+
+
+_threads_lock = threading.Lock()
+_refresh_threads: list[threading.Thread] = []
+
+
+def start_demo_refresh(bind: Engine) -> None:
+    """Rebuild the demo on a thread of its own, detached from the request that noticed.
+
+    Deliberately not a FastAPI BackgroundTask: those run after the response body but still
+    inside the ASGI call, so uvicorn does not read the next request on that keep-alive
+    connection until they finish. A rebuild takes seconds, and the visitor's very next call
+    (signing in, loading the dashboard) would queue behind it.
+    """
+    thread = threading.Thread(target=refresh_demo_in_background, args=(bind,), name="demo-refresh", daemon=True)
+    with _threads_lock:
+        _refresh_threads[:] = [existing for existing in _refresh_threads if existing.is_alive()]
+        _refresh_threads.append(thread)
+    thread.start()
+
+
+def wait_for_demo_refresh(timeout: float = 30.0) -> None:
+    """For the tests: block until a rebuild started by start_demo_refresh has finished."""
+    with _threads_lock:
+        threads = list(_refresh_threads)
+    for thread in threads:
+        thread.join(timeout)

@@ -108,6 +108,16 @@ def fresh_whatsapp_state():
     CUSTOMER_STATE.clear()
 
 
+@pytest.fixture(autouse=True)
+def fresh_demo_accounts_cache():
+    """/api/demo/accounts caches its answer in memory; each test gets its own database."""
+    from app.routers.demo import reset_cache
+
+    reset_cache()
+    yield
+    reset_cache()
+
+
 @pytest.fixture()
 def world(session_factory) -> World:
     """Two restaurants; A has two branches and a dish with recipe lines in both branches."""

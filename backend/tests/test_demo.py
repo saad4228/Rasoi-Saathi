@@ -6,8 +6,9 @@ from conftest import auth
 
 from app.demo import DEMO_ACCOUNTS, DEMO_RESTAURANT_ID
 from app.models import Branch, MenuItem, Order, Restaurant, User
+from app.routers.demo import reset_cache
 from app.routers.operations import module_catalog
-from app.services.demo_workspace import build_demo, wipe_demo
+from app.services.demo_workspace import build_demo, wait_for_demo_refresh, wipe_demo
 
 LOGINS = {role: uuid4() for role, _, _ in DEMO_ACCOUNTS}
 
@@ -80,6 +81,7 @@ def test_stale_demo_rebuilds_itself_when_the_login_page_loads(client, demo, sess
         db.commit()
 
     assert client.get("/api/demo/accounts").json()["available"] is True
+    wait_for_demo_refresh()  # the rebuild runs on its own thread, detached from the request
 
     with session_factory() as db:
         built_at = db.get(Restaurant, DEMO_RESTAURANT_ID).created_at
@@ -91,7 +93,9 @@ def test_stale_demo_rebuilds_itself_when_the_login_page_loads(client, demo, sess
     # A fresh demo is left alone.
     with session_factory() as db:
         order_ids = {o.id for o in db.query(Order).filter(Order.restaurant_id == DEMO_RESTAURANT_ID)}
+    reset_cache()  # the answer is cached, and this assertion is about the rebuild clock
     client.get("/api/demo/accounts")
+    wait_for_demo_refresh()
     with session_factory() as db:
         assert {o.id for o in db.query(Order).filter(Order.restaurant_id == DEMO_RESTAURANT_ID)} == order_ids
 

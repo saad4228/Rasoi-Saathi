@@ -1,11 +1,16 @@
 import logging
+import threading
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.auth.jwt import get_jwks_client
 from app.config import get_settings
+from app.database import engine
 from app.routers.auth import router as auth_router
 from app.routers.copilot import router as copilot_router
 from app.routers.demo import router as demo_router
@@ -58,9 +63,41 @@ allowed_origins = [origin.strip().rstrip("/") for origin in settings.frontend_ur
 # and a blocked CORS request looks like a failed login in the browser.
 LOCAL_DEV_ORIGINS = r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
 
+
+def warm_up() -> None:
+    """Pay the one-off costs of the first request at startup instead of making a visitor wait.
+
+    Opening the first connection to a hosted Supabase region costs a couple of seconds (DNS,
+    TLS, pooler auth), and the first token check downloads Supabase's signing keys. Whoever
+    opened the login page first used to absorb both. Failures are only logged: the app must
+    still start when the database or Supabase is unreachable, so the request path can report
+    the real problem.
+    """
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001 - startup must not depend on the database being up
+        logger.warning("Could not open a database connection at startup (%s); the first request will.", exc)
+    if not settings.supabase_jwt_secret:
+        try:
+            get_jwks_client().get_jwk_set()
+        except Exception as exc:  # noqa: BLE001 - same: the request path reports this properly
+            logger.warning("Could not fetch Supabase signing keys at startup (%s); the first login will.", exc)
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    # A daemon thread, so slow or unreachable services can't hold up startup or shutdown.
+    # Skipped for SQLite (the tests), where there is nothing to warm up.
+    if engine.dialect.name != "sqlite":
+        threading.Thread(target=warm_up, name="warm-up", daemon=True).start()
+    yield
+
+
 app = FastAPI(
     title="Rasoi Saathi API",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Middleware added last runs first: CORS must wrap the error middleware so
